@@ -3,7 +3,7 @@
   "version": "1.2.0",
   "simulation": {
     "creaturePreset": "starlings",
-    "birdCount": 2000,
+    "birdCount": 200,
     "particleSize": 1.0,
     "maxSpeed": 15,
     "maxForce": 0.5,
