@@ -5,6 +5,17 @@ A high-performance, real-time starling murmuration simulator demonstrating emerg
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?logo=typescript)
 ![PixiJS](https://img.shields.io/badge/PixiJS-8.6-e72264?logo=pixijs)
 ![Vite](https://img.shields.io/badge/Vite-6.0-646CFF?logo=vite)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+<!-- Add a demo GIF or screenshot here -->
+<!-- ![Demo](./docs/demo.gif) -->
+
+---
+
+## Prerequisites
+
+- **Node.js** 18+ (LTS recommended)
+- **npm** 9+ (comes with Node.js)
 
 ---
 
@@ -212,4 +223,4 @@ Works in all modern browsers with WebGL support:
 
 ## License
 
-MIT License — feel free to use, modify, and distribute.
+This project is licensed under the [MIT License](./LICENSE) — feel free to use, modify, and distribute.

@@ -11,7 +11,7 @@
 import { App } from './App';
 import { loadConfig, setConfig } from './config/ConfigLoader';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 console.log(`🐦 Starling Swarm Simulator v${VERSION}`);
 

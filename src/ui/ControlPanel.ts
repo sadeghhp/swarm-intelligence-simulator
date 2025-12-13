@@ -1,9 +1,10 @@
 /**
  * Control Panel - Tweakpane integration for real-time parameter adjustment
- * Version: 1.2.0 - Extended with creature presets, food, and visual customization
+ * Version: 1.3.0 - Added custom preset save/load from localStorage
  * 
  * Provides organized controls for all simulation parameters:
  * - Creature presets (starlings, insects, fish, bats, fireflies)
+ * - Custom preset save/load (localStorage)
  * - Simulation controls (count, speed, pause/reset)
  * - Swarm rule weights
  * - Environmental settings (wind, predator, food)
@@ -19,6 +20,7 @@ import type {
   ICreaturePreset
 } from '../types';
 import { getConfig } from '../config/ConfigLoader';
+import { getPresetManager } from '../config/PresetManager';
 
 export interface ControlPanelCallbacks {
   onBirdCountChange: (count: number) => void;
@@ -47,6 +49,18 @@ export class ControlPanel {
   
   /** Preset selector state */
   private presetState = { preset: 'starlings' as CreaturePreset };
+  
+  /** Custom preset state */
+  private customPresetState = {
+    selectedPreset: '',
+    newPresetName: '',
+    newPresetDesc: ''
+  };
+  
+  /** Custom presets folder reference for refresh */
+  private customPresetsFolder: FolderApi | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private savedPresetBinding: any = null;
 
   constructor(
     container: HTMLElement,
@@ -70,6 +84,7 @@ export class ControlPanel {
     });
     
     this.setupPresets();
+    this.setupCustomPresets();
     this.setupSimulationControls();
     this.setupSwarmRules();
     this.setupEnvironment();
@@ -142,6 +157,249 @@ export class ControlPanel {
     this.pane.refresh();
     this.callbacks.onColorChange();
     this.callbacks.onPerceptionRadiusChange(presetConfig.perceptionRadius);
+  }
+
+  /**
+   * Setup custom presets (save/load from localStorage)
+   */
+  private setupCustomPresets(): void {
+    const folder = this.pane.addFolder({
+      title: '💾 Custom Presets',
+      expanded: false
+    });
+    this.customPresetsFolder = folder;
+
+    const presetManager = getPresetManager();
+
+    // Build saved presets dropdown options
+    const buildPresetOptions = (): Record<string, string> => {
+      const options: Record<string, string> = { '-- Select --': '' };
+      for (const preset of presetManager.getAllPresets()) {
+        options[preset.name] = preset.name;
+      }
+      return options;
+    };
+
+    // Saved presets dropdown
+    this.savedPresetBinding = folder.addBinding(this.customPresetState, 'selectedPreset', {
+      label: 'Saved',
+      options: buildPresetOptions()
+    });
+
+    // Load button
+    folder.addButton({
+      title: '📂 Load Selected'
+    }).on('click', () => {
+      const name = this.customPresetState.selectedPreset;
+      if (!name) {
+        this.showNotification('Select a preset first', 'warning');
+        return;
+      }
+
+      const preset = presetManager.getPreset(name);
+      if (!preset) {
+        this.showNotification(`Preset "${name}" not found`, 'error');
+        return;
+      }
+
+      // Apply preset
+      presetManager.applyPreset(preset, this.simConfig, this.envConfig, this.renderConfig);
+      
+      // Update UI and notify callbacks
+      this.pane.refresh();
+      this.callbacks.onColorChange();
+      this.callbacks.onPerceptionRadiusChange(this.simConfig.perceptionRadius);
+      this.callbacks.onPresetChange('custom');
+      
+      this.showNotification(`Loaded "${name}"`, 'success');
+    });
+
+    // Delete button
+    folder.addButton({
+      title: '🗑️ Delete Selected'
+    }).on('click', () => {
+      const name = this.customPresetState.selectedPreset;
+      if (!name) {
+        this.showNotification('Select a preset first', 'warning');
+        return;
+      }
+
+      if (confirm(`Delete preset "${name}"?`)) {
+        presetManager.deletePreset(name);
+        this.customPresetState.selectedPreset = '';
+        this.refreshPresetDropdown();
+        this.showNotification(`Deleted "${name}"`, 'success');
+      }
+    });
+
+    // Separator
+    folder.addBlade({ view: 'separator' });
+
+    // New preset name input
+    folder.addBinding(this.customPresetState, 'newPresetName', {
+      label: 'Name'
+    });
+
+    // New preset description input
+    folder.addBinding(this.customPresetState, 'newPresetDesc', {
+      label: 'Description'
+    });
+
+    // Save button
+    folder.addButton({
+      title: '💾 Save Current as New Preset'
+    }).on('click', () => {
+      const name = this.customPresetState.newPresetName.trim();
+      if (!name) {
+        this.showNotification('Enter a preset name', 'warning');
+        return;
+      }
+
+      const desc = this.customPresetState.newPresetDesc.trim() || 'Custom preset';
+
+      // Check if exists
+      if (presetManager.hasPreset(name)) {
+        if (!confirm(`Preset "${name}" exists. Overwrite?`)) {
+          return;
+        }
+      }
+
+      // Save preset
+      presetManager.savePreset(name, desc, this.simConfig, this.envConfig, this.renderConfig);
+      
+      // Clear inputs
+      this.customPresetState.newPresetName = '';
+      this.customPresetState.newPresetDesc = '';
+      this.customPresetState.selectedPreset = name;
+      
+      // Refresh dropdown
+      this.refreshPresetDropdown();
+      this.pane.refresh();
+      
+      this.showNotification(`Saved "${name}"`, 'success');
+    });
+
+    // Separator
+    folder.addBlade({ view: 'separator' });
+
+    // Export button
+    folder.addButton({
+      title: '📤 Export All Presets'
+    }).on('click', () => {
+      const json = presetManager.exportPresets();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'swarm-presets.json';
+      a.click();
+      
+      URL.revokeObjectURL(url);
+      this.showNotification('Presets exported', 'success');
+    });
+
+    // Import button
+    folder.addButton({
+      title: '📥 Import Presets'
+    }).on('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      
+      input.onchange = async (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+
+        try {
+          const text = await file.text();
+          const count = presetManager.importPresets(text, false);
+          this.refreshPresetDropdown();
+          this.showNotification(`Imported ${count} presets`, 'success');
+        } catch (error) {
+          this.showNotification('Import failed: invalid file', 'error');
+        }
+      };
+
+      input.click();
+    });
+
+    // Stats
+    const count = presetManager.getPresetCount();
+    const size = (presetManager.getStorageSize() / 1024).toFixed(1);
+    folder.addBlade({
+      view: 'text',
+      label: 'Storage',
+      parse: (v: string) => v,
+      value: `${count} presets (${size} KB)`
+    });
+  }
+
+  /**
+   * Refresh the saved presets dropdown
+   */
+  private refreshPresetDropdown(): void {
+    if (!this.customPresetsFolder || !this.savedPresetBinding) return;
+
+    const presetManager = getPresetManager();
+    
+    // Remove old binding
+    this.savedPresetBinding.dispose();
+    
+    // Build new options
+    const options: Record<string, string> = { '-- Select --': '' };
+    for (const preset of presetManager.getAllPresets()) {
+      options[preset.name] = preset.name;
+    }
+
+    // Add new binding at the start of the folder (index 0)
+    this.savedPresetBinding = this.customPresetsFolder.addBinding(this.customPresetState, 'selectedPreset', {
+      label: 'Saved',
+      options,
+      index: 0
+    });
+  }
+
+  /**
+   * Show a notification message
+   */
+  private showNotification(message: string, type: 'success' | 'warning' | 'error'): void {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `preset-notification preset-notification-${type}`;
+    notification.textContent = message;
+    
+    // Style it
+    Object.assign(notification.style, {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      padding: '12px 20px',
+      borderRadius: '8px',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      fontSize: '14px',
+      fontWeight: '500',
+      zIndex: '10000',
+      animation: 'slideIn 0.3s ease-out',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+    });
+
+    // Type-specific colors
+    const colors = {
+      success: { bg: '#10b981', text: '#ffffff' },
+      warning: { bg: '#f59e0b', text: '#000000' },
+      error: { bg: '#ef4444', text: '#ffffff' }
+    };
+    notification.style.backgroundColor = colors[type].bg;
+    notification.style.color = colors[type].text;
+
+    document.body.appendChild(notification);
+
+    // Remove after delay
+    setTimeout(() => {
+      notification.style.animation = 'slideOut 0.3s ease-in';
+      setTimeout(() => notification.remove(), 300);
+    }, 2500);
   }
 
   /**
