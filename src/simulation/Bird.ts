@@ -1,6 +1,6 @@
 /**
  * Bird Entity - Core simulation unit for swarm behavior
- * Version: 1.0.0
+ * Version: 1.1.0 - Performance optimized (zero allocations in hot path)
  * 
  * Each bird maintains its own physics state:
  * - Position: Current location in 2D space
@@ -15,6 +15,10 @@
 
 import { Vector2 } from '../utils/Vector2';
 import type { ISimulationConfig } from '../types';
+
+// Pre-allocated vectors for all birds (static to avoid per-bird allocation)
+const tempVec = new Vector2();
+const tempBoundary = new Vector2();
 
 export class Bird {
   /** Unique identifier */
@@ -38,9 +42,6 @@ export class Bird {
   /** Cached heading angle for rendering */
   private _heading: number = 0;
 
-  // Reusable vectors for calculations (avoid allocations)
-  private static tempVec = new Vector2();
-
   constructor(id: number, x: number, y: number) {
     this.id = id;
     this.position = new Vector2(x, y);
@@ -53,38 +54,48 @@ export class Bird {
    * Forces accumulate during each frame and are applied in update()
    */
   applyForce(force: Vector2): void {
-    this.acceleration.add(force);
+    this.acceleration.x += force.x;
+    this.acceleration.y += force.y;
   }
 
   /**
    * Update bird position based on physics
+   * PERFORMANCE: Zero allocations
    * 
    * @param deltaTime - Time since last frame (seconds)
    * @param config - Simulation configuration for constraints
    */
   update(deltaTime: number, config: ISimulationConfig): void {
     // Apply acceleration to velocity
-    this.velocity.add(Bird.tempVec.copy(this.acceleration).mult(deltaTime * 60));
+    const accelMult = deltaTime * 60;
+    this.velocity.x += this.acceleration.x * accelMult;
+    this.velocity.y += this.acceleration.y * accelMult;
     
     // Limit to max speed (higher when panicked)
     const effectiveMaxSpeed = config.maxSpeed * (1 + this.panicLevel * 0.5);
     this.velocity.limit(effectiveMaxSpeed);
     
     // Apply velocity to position
-    this.position.add(Bird.tempVec.copy(this.velocity).mult(deltaTime * config.simulationSpeed));
+    const velMult = deltaTime * config.simulationSpeed;
+    this.position.x += this.velocity.x * velMult;
+    this.position.y += this.velocity.y * velMult;
     
-    // Cache heading for rendering
-    if (!this.velocity.isZero()) {
-      this._heading = this.velocity.heading();
+    // Cache heading for rendering (avoid if velocity is near zero)
+    const velMagSq = this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y;
+    if (velMagSq > 0.01) {
+      this._heading = Math.atan2(this.velocity.y, this.velocity.x);
     }
     
     // Clear acceleration for next frame
-    this.acceleration.zero();
+    this.acceleration.x = 0;
+    this.acceleration.y = 0;
     
     // Decay panic level
-    this.panicLevel *= 0.98;
-    if (this.panicLevel < 0.01) {
-      this.panicLevel = 0;
+    if (this.panicLevel > 0) {
+      this.panicLevel *= 0.98;
+      if (this.panicLevel < 0.01) {
+        this.panicLevel = 0;
+      }
     }
   }
 
@@ -98,6 +109,7 @@ export class Bird {
   /**
    * Apply boundary avoidance forces
    * Creates a soft force field at screen edges
+   * PERFORMANCE: Uses pre-allocated vector
    */
   applyBoundaryForce(
     width: number,
@@ -105,32 +117,36 @@ export class Bird {
     margin: number,
     force: number
   ): void {
-    const steer = new Vector2();
+    tempBoundary.x = 0;
+    tempBoundary.y = 0;
+    
+    const x = this.position.x;
+    const y = this.position.y;
+    const rightEdge = width - margin;
+    const bottomEdge = height - margin;
     
     // Left boundary
-    if (this.position.x < margin) {
-      const strength = (margin - this.position.x) / margin;
-      steer.x += force * strength;
+    if (x < margin) {
+      tempBoundary.x = force * (margin - x) / margin;
     }
     // Right boundary
-    else if (this.position.x > width - margin) {
-      const strength = (this.position.x - (width - margin)) / margin;
-      steer.x -= force * strength;
+    else if (x > rightEdge) {
+      tempBoundary.x = -force * (x - rightEdge) / margin;
     }
     
     // Top boundary
-    if (this.position.y < margin) {
-      const strength = (margin - this.position.y) / margin;
-      steer.y += force * strength;
+    if (y < margin) {
+      tempBoundary.y = force * (margin - y) / margin;
     }
     // Bottom boundary
-    else if (this.position.y > height - margin) {
-      const strength = (this.position.y - (height - margin)) / margin;
-      steer.y -= force * strength;
+    else if (y > bottomEdge) {
+      tempBoundary.y = -force * (y - bottomEdge) / margin;
     }
     
-    if (!steer.isZero()) {
-      this.applyForce(steer);
+    // Only apply if non-zero
+    if (tempBoundary.x !== 0 || tempBoundary.y !== 0) {
+      this.acceleration.x += tempBoundary.x;
+      this.acceleration.y += tempBoundary.y;
     }
   }
 
@@ -199,23 +215,31 @@ export class Bird {
 
   /**
    * Check if a point is within this bird's field of view
+   * PERFORMANCE: No allocations, inline math
    * 
    * @param point - Point to check
    * @param fovDegrees - Field of view in degrees (e.g., 270 = blind spot behind)
    */
   isInFieldOfView(point: Vector2, fovDegrees: number): boolean {
-    if (this.velocity.isZero()) return true; // If stationary, can see everything
+    // If velocity is near zero, can see everything
+    const velMagSq = this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y;
+    if (velMagSq < 0.01) return true;
     
-    const toPoint = Bird.tempVec.copy(point).sub(this.position);
-    const angleToPoint = toPoint.heading();
-    const halfFov = (fovDegrees * Math.PI / 180) / 2;
+    // Calculate angle to point
+    const dx = point.x - this.position.x;
+    const dy = point.y - this.position.y;
+    const angleToPoint = Math.atan2(dy, dx);
     
+    // Calculate angular difference
     let diff = angleToPoint - this._heading;
-    // Normalize to [-PI, PI]
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
     
-    return Math.abs(diff) <= halfFov;
+    // Normalize to [-PI, PI] (branchless-ish)
+    if (diff > Math.PI) diff -= 6.283185307179586;
+    else if (diff < -Math.PI) diff += 6.283185307179586;
+    
+    // Check against half FOV
+    const halfFov = fovDegrees * 0.008726646259971648; // PI/180/2
+    return diff > -halfFov && diff < halfFov;
   }
 
   /**

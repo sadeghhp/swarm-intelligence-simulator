@@ -31,6 +31,12 @@ import type {
   IAttractor
 } from '../types';
 
+// Pre-allocated vectors for simulation loop (avoid GC pressure)
+const tempSwarmForce = new Vector2();
+const tempPanicForce = new Vector2();
+const tempAttractorForce = new Vector2();
+const tempWindForce = new Vector2();
+
 export class Flock {
   /** All birds in the flock */
   public birds: Bird[] = [];
@@ -173,17 +179,23 @@ export class Flock {
 
   /**
    * Fixed timestep physics update
+   * PERFORMANCE: Zero allocations in hot loop
    */
   private fixedUpdate(dt: number): void {
     // Step 1: Rebuild spatial grid
     this.spatialGrid.clear();
     this.spatialGrid.insertAll(this.birds);
     
+    const birdsLen = this.birds.length;
+    const attractorsLen = this.attractors.length;
+    const hasPredator = this.predatorPosition && this.envConfig.predatorEnabled;
+    const hasWind = this.envConfig.windSpeed > 0;
+    
     // Step 2: Update each bird
-    for (let i = 0; i < this.birds.length; i++) {
+    for (let i = 0; i < birdsLen; i++) {
       const bird = this.birds[i];
       
-      // Find neighbors using spatial grid
+      // Find neighbors using spatial grid (returns view into buffer)
       const neighbors = this.spatialGrid.getNeighbors(
         bird,
         this.birds,
@@ -191,51 +203,58 @@ export class Flock {
         this.config.fieldOfView
       );
       
-      // Calculate swarm forces
-      const swarmForce = this.rules.calculate(
+      // Calculate swarm forces (result stored in tempSwarmForce)
+      this.rules.calculate(
         bird,
         neighbors,
         this.config,
         this.envConfig,
-        this.simulationTime
+        this.simulationTime,
+        tempSwarmForce
       );
-      bird.applyForce(swarmForce);
+      bird.applyForce(tempSwarmForce);
       
       // Apply wind force
-      if (this.envConfig.windSpeed > 0) {
-        const windForce = this.calculateWindForce(bird);
-        bird.applyForce(windForce);
+      if (hasWind) {
+        this.calculateWindForce(bird, tempWindForce);
+        bird.applyForce(tempWindForce);
       }
       
       // Apply predator panic
-      if (this.predatorPosition && this.envConfig.predatorEnabled) {
-        const panicForce = this.rules.calculatePanicResponse(
+      if (hasPredator) {
+        this.rules.calculatePanicResponse(
           bird,
-          this.predatorPosition,
+          this.predatorPosition!,
           this.envConfig.panicRadius,
-          this.config.maxForce * 2
+          this.config.maxForce * 2,
+          tempPanicForce
         );
-        bird.applyForce(panicForce);
+        bird.applyForce(tempPanicForce);
         
         // Propagate panic to nearby birds
         if (bird.panicLevel > 0.3) {
-          for (const neighbor of neighbors) {
-            neighbor.applyPanic(bird.panicLevel * this.envConfig.panicDecay * 0.5);
+          const neighborsLen = neighbors.length;
+          const panicSpread = bird.panicLevel * this.envConfig.panicDecay * 0.5;
+          for (let j = 0; j < neighborsLen; j++) {
+            neighbors[j].applyPanic(panicSpread);
           }
         }
       }
       
       // Apply attractor forces
-      for (const attractor of this.attractors) {
-        const attractorForce = this.rules.calculateAttractorForce(
+      for (let j = 0; j < attractorsLen; j++) {
+        const attractor = this.attractors[j];
+        this.rules.calculateAttractorForce(
           bird,
-          new Vector2(attractor.position.x, attractor.position.y),
+          attractor.position.x,
+          attractor.position.y,
           attractor.strength,
           attractor.radius,
           attractor.isRepulsor,
-          this.config.maxForce
+          this.config.maxForce,
+          tempAttractorForce
         );
-        bird.applyForce(attractorForce);
+        bird.applyForce(tempAttractorForce);
       }
       
       // Apply boundary avoidance
@@ -253,10 +272,14 @@ export class Flock {
 
   /**
    * Calculate wind force for a bird
+   * PERFORMANCE: Uses output parameter, zero allocations
    */
-  private calculateWindForce(bird: Bird): Vector2 {
+  private calculateWindForce(bird: Bird, outForce: Vector2): void {
     const windAngle = this.envConfig.windDirection * Math.PI / 180;
-    const baseWind = Vector2.fromAngle(windAngle, this.envConfig.windSpeed * 0.01);
+    const windMag = this.envConfig.windSpeed * 0.01;
+    
+    outForce.x = Math.cos(windAngle) * windMag;
+    outForce.y = Math.sin(windAngle) * windMag;
     
     // Add turbulence based on position
     if (this.envConfig.windTurbulence > 0) {
@@ -265,14 +288,9 @@ export class Flock {
       const ny = bird.position.y * 0.005;
       
       // Simple noise approximation for turbulence
-      const turbX = Math.sin(nx * 2.5 + ny * 1.3) * turbulence * 0.3;
-      const turbY = Math.cos(nx * 1.7 + ny * 2.1) * turbulence * 0.3;
-      
-      baseWind.x += turbX;
-      baseWind.y += turbY;
+      outForce.x += Math.sin(nx * 2.5 + ny * 1.3) * turbulence * 0.3;
+      outForce.y += Math.cos(nx * 1.7 + ny * 2.1) * turbulence * 0.3;
     }
-    
-    return baseWind;
   }
 
   /**

@@ -1,20 +1,24 @@
 /**
  * Control Panel - Tweakpane integration for real-time parameter adjustment
- * Version: 1.0.0
+ * Version: 1.2.0 - Extended with creature presets, food, and visual customization
  * 
  * Provides organized controls for all simulation parameters:
- * - Simulation controls (bird count, speed, pause/reset)
+ * - Creature presets (starlings, insects, fish, bats, fireflies)
+ * - Simulation controls (count, speed, pause/reset)
  * - Swarm rule weights
- * - Environmental settings
- * - Rendering options
+ * - Environmental settings (wind, predator, food)
+ * - Visual customization (size, colors, effects)
  */
 
-import { Pane } from 'tweakpane';
+import { Pane, FolderApi } from 'tweakpane';
 import type {
   ISimulationConfig,
   IEnvironmentConfig,
-  IRenderingConfig
+  IRenderingConfig,
+  CreaturePreset,
+  ICreaturePreset
 } from '../types';
+import { getConfig } from '../config/ConfigLoader';
 
 export interface ControlPanelCallbacks {
   onBirdCountChange: (count: number) => void;
@@ -24,6 +28,9 @@ export interface ControlPanelCallbacks {
   onReset: () => void;
   onPredatorToggle: (enabled: boolean) => void;
   onTrailsToggle: (enabled: boolean) => void;
+  onPresetChange: (preset: CreaturePreset) => void;
+  onFoodToggle: (enabled: boolean) => void;
+  onColorChange: () => void;
 }
 
 export class ControlPanel {
@@ -34,6 +41,12 @@ export class ControlPanel {
   public simConfig: ISimulationConfig;
   public envConfig: IEnvironmentConfig;
   public renderConfig: IRenderingConfig;
+  
+  /** Creature presets from loaded config */
+  private creaturePresets: Record<CreaturePreset, ICreaturePreset>;
+  
+  /** Preset selector state */
+  private presetState = { preset: 'starlings' as CreaturePreset };
 
   constructor(
     container: HTMLElement,
@@ -47,16 +60,88 @@ export class ControlPanel {
     this.renderConfig = { ...renderConfig };
     this.callbacks = callbacks;
     
+    // Get creature presets from loaded config
+    this.creaturePresets = getConfig().creaturePresets;
+    
     // Create Tweakpane instance
     this.pane = new Pane({
       container,
       title: 'Simulation Parameters'
     });
     
+    this.setupPresets();
     this.setupSimulationControls();
     this.setupSwarmRules();
     this.setupEnvironment();
+    this.setupFood();
+    this.setupVisuals();
     this.setupRendering();
+  }
+
+  /**
+   * Setup creature presets
+   */
+  private setupPresets(): void {
+    const folder = this.pane.addFolder({
+      title: 'Creature Preset',
+      expanded: true
+    });
+    
+    // Preset dropdown
+    folder.addBinding(this.presetState, 'preset', {
+      label: 'Type',
+      options: {
+        'Starlings': 'starlings',
+        'Insects': 'insects',
+        'Fish School': 'fish',
+        'Bats': 'bats',
+        'Fireflies': 'fireflies',
+        'Custom': 'custom'
+      }
+    }).on('change', (ev) => {
+      this.applyPreset(ev.value as CreaturePreset);
+      this.callbacks.onPresetChange(ev.value as CreaturePreset);
+    });
+    
+    // Description text
+    const presetInfo = this.creaturePresets[this.presetState.preset];
+    folder.addBlade({
+      view: 'text',
+      label: 'Info',
+      parse: (v: string) => v,
+      value: presetInfo.description
+    });
+  }
+
+  /**
+   * Apply a creature preset
+   */
+  private applyPreset(preset: CreaturePreset): void {
+    const presetConfig = this.creaturePresets[preset];
+    
+    // Apply to simulation config
+    this.simConfig.creaturePreset = preset;
+    this.simConfig.particleSize = presetConfig.particleSize;
+    this.simConfig.maxSpeed = presetConfig.maxSpeed;
+    this.simConfig.maxForce = presetConfig.maxForce;
+    this.simConfig.perceptionRadius = presetConfig.perceptionRadius;
+    this.simConfig.separationRadius = presetConfig.separationRadius;
+    this.simConfig.alignmentWeight = presetConfig.alignmentWeight;
+    this.simConfig.cohesionWeight = presetConfig.cohesionWeight;
+    this.simConfig.separationWeight = presetConfig.separationWeight;
+    this.simConfig.fieldOfView = presetConfig.fieldOfView;
+    
+    // Apply to render config
+    this.renderConfig.baseColor = presetConfig.baseColor;
+    this.renderConfig.denseColor = presetConfig.denseColor;
+    this.renderConfig.panicColor = presetConfig.panicColor;
+    this.renderConfig.glowEnabled = presetConfig.glowEnabled;
+    this.renderConfig.glowIntensity = presetConfig.glowIntensity;
+    
+    // Refresh UI
+    this.pane.refresh();
+    this.callbacks.onColorChange();
+    this.callbacks.onPerceptionRadiusChange(presetConfig.perceptionRadius);
   }
 
   /**
@@ -68,9 +153,9 @@ export class ControlPanel {
       expanded: true
     });
     
-    // Bird count
+    // Creature count
     folder.addBinding(this.simConfig, 'birdCount', {
-      label: 'Birds',
+      label: 'Count',
       min: 100,
       max: 5000,
       step: 100
@@ -78,34 +163,64 @@ export class ControlPanel {
       this.callbacks.onBirdCountChange(ev.value);
     });
     
+    // Particle size
+    folder.addBinding(this.simConfig, 'particleSize', {
+      label: 'Size',
+      min: 0.2,
+      max: 2.5,
+      step: 0.1
+    });
+    
     // Simulation speed
     folder.addBinding(this.simConfig, 'simulationSpeed', {
       label: 'Speed',
       min: 0.1,
-      max: 2.0,
+      max: 3.0,
       step: 0.1
     });
     
     // Max speed
     folder.addBinding(this.simConfig, 'maxSpeed', {
-      label: 'Max Speed',
-      min: 5,
-      max: 30,
+      label: 'Max Velocity',
+      min: 3,
+      max: 40,
       step: 1
     });
     
     // Max force
     folder.addBinding(this.simConfig, 'maxForce', {
-      label: 'Max Force',
+      label: 'Agility',
       min: 0.1,
       max: 2.0,
       step: 0.1
     });
     
-    // Pause/Resume button
-    const pauseBtn = folder.addButton({
-      title: 'Pause'
+    // Noise strength
+    folder.addBinding(this.simConfig, 'noiseStrength', {
+      label: 'Randomness',
+      min: 0,
+      max: 0.3,
+      step: 0.01
     });
+    
+    // Wander strength
+    folder.addBinding(this.simConfig, 'wanderStrength', {
+      label: 'Wander',
+      min: 0,
+      max: 0.5,
+      step: 0.05
+    });
+    
+    // Wrap edges toggle
+    folder.addBinding(this.simConfig, 'wrapEdges', {
+      label: 'Wrap Edges'
+    });
+    
+    // Buttons
+    folder.addBlade({ view: 'separator' });
+    
+    // Pause/Resume button
+    const pauseBtn = folder.addButton({ title: 'Pause' });
     pauseBtn.on('click', () => {
       this.simConfig.paused = !this.simConfig.paused;
       pauseBtn.title = this.simConfig.paused ? 'Resume' : 'Pause';
@@ -117,9 +232,7 @@ export class ControlPanel {
     });
     
     // Reset button
-    folder.addButton({
-      title: 'Reset Simulation'
-    }).on('click', () => {
+    folder.addButton({ title: 'Reset' }).on('click', () => {
       this.callbacks.onReset();
     });
   }
@@ -129,15 +242,15 @@ export class ControlPanel {
    */
   private setupSwarmRules(): void {
     const folder = this.pane.addFolder({
-      title: 'Swarm Rules',
-      expanded: true
+      title: 'Swarm Behavior',
+      expanded: false
     });
     
     // Alignment weight
     folder.addBinding(this.simConfig, 'alignmentWeight', {
       label: 'Alignment',
       min: 0,
-      max: 2,
+      max: 3,
       step: 0.1
     });
     
@@ -145,7 +258,7 @@ export class ControlPanel {
     folder.addBinding(this.simConfig, 'cohesionWeight', {
       label: 'Cohesion',
       min: 0,
-      max: 2,
+      max: 3,
       step: 0.1
     });
     
@@ -153,15 +266,17 @@ export class ControlPanel {
     folder.addBinding(this.simConfig, 'separationWeight', {
       label: 'Separation',
       min: 0,
-      max: 3,
+      max: 4,
       step: 0.1
     });
     
+    folder.addBlade({ view: 'separator' });
+    
     // Perception radius
     folder.addBinding(this.simConfig, 'perceptionRadius', {
-      label: 'Perception',
-      min: 20,
-      max: 150,
+      label: 'Vision Range',
+      min: 15,
+      max: 200,
       step: 5
     }).on('change', (ev) => {
       this.callbacks.onPerceptionRadiusChange(ev.value);
@@ -169,18 +284,35 @@ export class ControlPanel {
     
     // Separation radius
     folder.addBinding(this.simConfig, 'separationRadius', {
-      label: 'Sep. Radius',
-      min: 10,
-      max: 50,
+      label: 'Personal Space',
+      min: 5,
+      max: 80,
       step: 2
     });
     
     // Field of view
     folder.addBinding(this.simConfig, 'fieldOfView', {
       label: 'Field of View',
-      min: 90,
+      min: 60,
       max: 360,
       step: 10
+    });
+    
+    folder.addBlade({ view: 'separator' });
+    
+    // Boundary settings
+    folder.addBinding(this.simConfig, 'boundaryMargin', {
+      label: 'Edge Margin',
+      min: 50,
+      max: 300,
+      step: 10
+    });
+    
+    folder.addBinding(this.simConfig, 'boundaryForce', {
+      label: 'Edge Force',
+      min: 0.1,
+      max: 2.0,
+      step: 0.1
     });
   }
 
@@ -190,67 +322,212 @@ export class ControlPanel {
   private setupEnvironment(): void {
     const folder = this.pane.addFolder({
       title: 'Environment',
-      expanded: true
+      expanded: false
     });
     
-    // Wind speed
-    folder.addBinding(this.envConfig, 'windSpeed', {
-      label: 'Wind Speed',
+    // Wind section
+    const windFolder = folder.addFolder({ title: 'Wind', expanded: true });
+    
+    windFolder.addBinding(this.envConfig, 'windSpeed', {
+      label: 'Speed',
       min: 0,
-      max: 10,
+      max: 15,
       step: 0.5
     });
     
-    // Wind direction
-    folder.addBinding(this.envConfig, 'windDirection', {
-      label: 'Wind Dir',
+    windFolder.addBinding(this.envConfig, 'windDirection', {
+      label: 'Direction',
       min: 0,
       max: 360,
       step: 5
     });
     
-    // Wind turbulence
-    folder.addBinding(this.envConfig, 'windTurbulence', {
+    windFolder.addBinding(this.envConfig, 'windTurbulence', {
       label: 'Turbulence',
       min: 0,
       max: 1,
       step: 0.1
     });
     
-    // Predator separator
-    folder.addBlade({
-      view: 'separator'
-    });
+    // Predator section
+    const predatorFolder = folder.addFolder({ title: 'Predator', expanded: true });
     
-    // Predator enabled
-    folder.addBinding(this.envConfig, 'predatorEnabled', {
-      label: 'Predator'
+    predatorFolder.addBinding(this.envConfig, 'predatorEnabled', {
+      label: 'Active'
     }).on('change', (ev) => {
       this.callbacks.onPredatorToggle(ev.value);
     });
     
-    // Predator speed
-    folder.addBinding(this.envConfig, 'predatorSpeed', {
-      label: 'Pred. Speed',
-      min: 10,
-      max: 30,
+    predatorFolder.addBinding(this.envConfig, 'predatorSpeed', {
+      label: 'Speed',
+      min: 8,
+      max: 35,
       step: 1
     });
     
-    // Predator aggression
-    folder.addBinding(this.envConfig, 'predatorAggression', {
+    predatorFolder.addBinding(this.envConfig, 'predatorAggression', {
       label: 'Aggression',
       min: 0,
       max: 1,
       step: 0.1
     });
     
-    // Panic radius
-    folder.addBinding(this.envConfig, 'panicRadius', {
-      label: 'Panic Radius',
+    predatorFolder.addBinding(this.envConfig, 'panicRadius', {
+      label: 'Panic Range',
       min: 50,
-      max: 300,
+      max: 400,
       step: 10
+    });
+    
+    predatorFolder.addBinding(this.envConfig, 'panicDecay', {
+      label: 'Panic Spread',
+      min: 0.5,
+      max: 1.0,
+      step: 0.05
+    });
+  }
+
+  /**
+   * Setup food/hunting folder
+   */
+  private setupFood(): void {
+    const folder = this.pane.addFolder({
+      title: 'Food & Hunting',
+      expanded: false
+    });
+    
+    // Food section
+    const foodFolder = folder.addFolder({ title: 'Food Sources', expanded: true });
+    
+    foodFolder.addBinding(this.envConfig, 'foodEnabled', {
+      label: 'Active'
+    }).on('change', (ev) => {
+      this.callbacks.onFoodToggle(ev.value);
+    });
+    
+    foodFolder.addBinding(this.envConfig, 'foodCount', {
+      label: 'Count',
+      min: 1,
+      max: 20,
+      step: 1
+    });
+    
+    foodFolder.addBinding(this.envConfig, 'foodAttractionStrength', {
+      label: 'Attraction',
+      min: 0.1,
+      max: 3.0,
+      step: 0.1
+    });
+    
+    foodFolder.addBinding(this.envConfig, 'foodAttractionRadius', {
+      label: 'Range',
+      min: 50,
+      max: 500,
+      step: 25
+    });
+    
+    foodFolder.addBinding(this.envConfig, 'foodRespawnTime', {
+      label: 'Respawn (s)',
+      min: 1,
+      max: 30,
+      step: 1
+    });
+    
+    // Hunting section (creatures hunting each other)
+    const huntingFolder = folder.addFolder({ title: 'Hunting Behavior', expanded: false });
+    
+    huntingFolder.addBinding(this.envConfig, 'huntingEnabled', {
+      label: 'Active'
+    });
+    
+    huntingFolder.addBinding(this.envConfig, 'huntingSpeed', {
+      label: 'Chase Speed',
+      min: 5,
+      max: 25,
+      step: 1
+    });
+    
+    huntingFolder.addBinding(this.envConfig, 'huntingRadius', {
+      label: 'Detection',
+      min: 30,
+      max: 200,
+      step: 10
+    });
+  }
+
+  /**
+   * Setup visual customization folder
+   */
+  private setupVisuals(): void {
+    const folder = this.pane.addFolder({
+      title: 'Visual Style',
+      expanded: false
+    });
+    
+    // Particle shape
+    folder.addBinding(this.renderConfig, 'particleShape', {
+      label: 'Shape',
+      options: {
+        'Arrow': 'arrow',
+        'Circle': 'circle',
+        'Triangle': 'triangle',
+        'Dot': 'dot'
+      }
+    });
+    
+    folder.addBlade({ view: 'separator' });
+    
+    // Colors (as hex strings for Tweakpane)
+    const colorState = {
+      baseColor: '#' + this.renderConfig.baseColor.toString(16).padStart(6, '0'),
+      denseColor: '#' + this.renderConfig.denseColor.toString(16).padStart(6, '0'),
+      panicColor: '#' + this.renderConfig.panicColor.toString(16).padStart(6, '0')
+    };
+    
+    folder.addBinding(colorState, 'baseColor', {
+      label: 'Base Color'
+    }).on('change', (ev) => {
+      this.renderConfig.baseColor = parseInt(ev.value.slice(1), 16);
+      this.callbacks.onColorChange();
+    });
+    
+    folder.addBinding(colorState, 'denseColor', {
+      label: 'Dense Color'
+    }).on('change', (ev) => {
+      this.renderConfig.denseColor = parseInt(ev.value.slice(1), 16);
+      this.callbacks.onColorChange();
+    });
+    
+    folder.addBinding(colorState, 'panicColor', {
+      label: 'Panic Color'
+    }).on('change', (ev) => {
+      this.renderConfig.panicColor = parseInt(ev.value.slice(1), 16);
+      this.callbacks.onColorChange();
+    });
+    
+    folder.addBlade({ view: 'separator' });
+    
+    // Coloring modes
+    folder.addBinding(this.renderConfig, 'colorByDensity', {
+      label: 'Color by Density'
+    });
+    
+    folder.addBinding(this.renderConfig, 'colorBySpeed', {
+      label: 'Color by Speed'
+    });
+    
+    folder.addBlade({ view: 'separator' });
+    
+    // Glow effect
+    folder.addBinding(this.renderConfig, 'glowEnabled', {
+      label: 'Glow Effect'
+    });
+    
+    folder.addBinding(this.renderConfig, 'glowIntensity', {
+      label: 'Glow Intensity',
+      min: 0,
+      max: 1,
+      step: 0.1
     });
   }
 
@@ -259,13 +536,13 @@ export class ControlPanel {
    */
   private setupRendering(): void {
     const folder = this.pane.addFolder({
-      title: 'Rendering',
+      title: 'Effects',
       expanded: false
     });
     
     // Show trails
     folder.addBinding(this.renderConfig, 'showTrails', {
-      label: 'Show Trails'
+      label: 'Motion Trails'
     }).on('change', (ev) => {
       this.callbacks.onTrailsToggle(ev.value);
     });
@@ -274,14 +551,16 @@ export class ControlPanel {
     folder.addBinding(this.renderConfig, 'trailLength', {
       label: 'Trail Length',
       min: 1,
-      max: 15,
+      max: 20,
       step: 1
     });
     
-    // Color by density
-    folder.addBinding(this.renderConfig, 'colorByDensity', {
-      label: 'Color by Density'
+    // Motion blur
+    folder.addBinding(this.renderConfig, 'motionBlur', {
+      label: 'Motion Blur'
     });
+    
+    folder.addBlade({ view: 'separator' });
     
     // Show wind particles
     folder.addBinding(this.renderConfig, 'showWindParticles', {
@@ -291,6 +570,11 @@ export class ControlPanel {
     // Show predator range
     folder.addBinding(this.renderConfig, 'showPredatorRange', {
       label: 'Predator Range'
+    });
+    
+    // Show food sources
+    folder.addBinding(this.renderConfig, 'showFoodSources', {
+      label: 'Food Sources'
     });
   }
 
@@ -308,4 +592,3 @@ export class ControlPanel {
     this.pane.dispose();
   }
 }
-

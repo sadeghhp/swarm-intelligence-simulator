@@ -9,7 +9,7 @@
  */
 
 import * as PIXI from 'pixi.js';
-import type { IAttractor, IEnvironmentConfig, IRenderingConfig } from '../types';
+import type { IAttractor, IEnvironmentConfig, IRenderingConfig, IFoodSource } from '../types';
 import { Vector2 } from '../utils/Vector2';
 
 interface WindParticle {
@@ -36,6 +36,9 @@ export class EnvironmentRenderer {
   
   /** Attractor container */
   private attractorContainer: PIXI.Container;
+  
+  /** Food source container */
+  private foodContainer: PIXI.Container;
   
   /** Wind particles */
   private windParticles: WindParticle[] = [];
@@ -69,6 +72,10 @@ export class EnvironmentRenderer {
     this.windContainer = new PIXI.Container();
     this.windContainer.alpha = 0.3;
     this.container.addChild(this.windContainer);
+    
+    // Food source layer
+    this.foodContainer = new PIXI.Container();
+    this.container.addChild(this.foodContainer);
     
     // Attractor layer
     this.attractorContainer = new PIXI.Container();
@@ -118,7 +125,8 @@ export class EnvironmentRenderer {
     deltaTime: number,
     envConfig: IEnvironmentConfig,
     predatorPosition: Vector2 | null,
-    attractors: IAttractor[]
+    attractors: IAttractor[],
+    foodSources: IFoodSource[] = []
   ): void {
     this.time += deltaTime;
     
@@ -140,6 +148,58 @@ export class EnvironmentRenderer {
     
     // Update attractors
     this.updateAttractors(attractors);
+    
+    // Update food sources
+    if (this.renderConfig.showFoodSources && foodSources.length > 0) {
+      this.updateFoodSources(foodSources);
+      this.foodContainer.visible = true;
+    } else {
+      this.foodContainer.visible = false;
+    }
+  }
+
+  /**
+   * Update food source visuals
+   */
+  private updateFoodSources(sources: IFoodSource[]): void {
+    this.foodContainer.removeChildren();
+    
+    for (const source of sources) {
+      const graphics = new PIXI.Graphics();
+      
+      // Pulsing effect
+      const pulse = Math.sin(this.time * 2 + source.id * 0.5) * 0.15 + 0.85;
+      const amountRatio = source.amount / source.maxAmount;
+      
+      // Outer glow
+      graphics.circle(source.position.x, source.position.y, source.radius * 0.3 * pulse);
+      graphics.fill({ color: 0x88ff88, alpha: 0.1 * amountRatio });
+      
+      // Inner circle (size based on remaining amount)
+      const innerRadius = 8 + amountRatio * 8;
+      graphics.circle(source.position.x, source.position.y, innerRadius * pulse);
+      graphics.fill({ color: 0x44ff44, alpha: 0.6 * amountRatio });
+      
+      // Core
+      graphics.circle(source.position.x, source.position.y, 5 * pulse);
+      graphics.fill({ color: 0xaaffaa, alpha: 0.9 });
+      
+      // Amount indicator ring (only when partially consumed)
+      if (amountRatio < 1 && amountRatio > 0) {
+        const startAngle = -Math.PI / 2;
+        const endAngle = startAngle + amountRatio * Math.PI * 2;
+        const ringRadius = innerRadius + 4;
+        
+        // Move to the start of the arc first to avoid line from origin
+        const startX = source.position.x + Math.cos(startAngle) * ringRadius;
+        const startY = source.position.y + Math.sin(startAngle) * ringRadius;
+        graphics.moveTo(startX, startY);
+        graphics.arc(source.position.x, source.position.y, ringRadius, startAngle, endAngle);
+        graphics.stroke({ width: 2, color: 0x00ff00, alpha: 0.5 });
+      }
+      
+      this.foodContainer.addChild(graphics);
+    }
   }
 
   /**

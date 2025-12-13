@@ -1,6 +1,6 @@
 /**
  * Swarm Rules Engine - Core flocking behavior
- * Version: 1.0.0
+ * Version: 1.1.0 - Performance optimized (zero allocations in hot loop)
  * 
  * Implements the three fundamental rules of flocking behavior
  * (Reynolds' Boids model) plus refinements for realistic starling murmurations:
@@ -29,6 +29,8 @@
  * - Noise Injection: Perlin noise adds natural variation
  * - Density Adaptation: Cohesion reduces in crowded areas
  * - Velocity Smoothing: Forces are limited to prevent jittery movement
+ * 
+ * PERFORMANCE: All methods use pre-allocated vectors - zero GC pressure.
  */
 
 import { Vector2 } from '../utils/Vector2';
@@ -42,6 +44,9 @@ const tempCohesion = new Vector2();
 const tempSeparation = new Vector2();
 const tempSteer = new Vector2();
 const tempDiff = new Vector2();
+const tempForce = new Vector2();
+const tempPanic = new Vector2();
+const tempAttractor = new Vector2();
 
 export class SwarmRules {
   /** Noise time offset for natural variation */
@@ -57,50 +62,47 @@ export class SwarmRules {
 
   /**
    * Calculate all steering forces for a single bird
+   * PERFORMANCE: Uses output parameter, zero allocations
    * 
-   * This is the main entry point called once per bird per frame.
-   * It combines all rules and returns the total steering force.
+   * @param outForce - Output vector to store result (will be modified)
    */
   calculate(
     bird: Bird,
     neighbors: Bird[],
     config: ISimulationConfig,
-    envConfig: IEnvironmentConfig,
-    time: number
-  ): Vector2 {
-    const force = new Vector2();
+    _envConfig: IEnvironmentConfig,
+    time: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
     
     if (neighbors.length === 0) {
       // No neighbors - add slight random movement
-      this.addNoise(bird, force, time, 0.1);
-      return force;
+      this.addNoise(bird, outForce, time, 0.1);
+      return;
     }
 
-    // Calculate each rule
-    const alignment = this.calculateAlignment(bird, neighbors, config);
-    const cohesion = this.calculateCohesion(bird, neighbors, config);
-    const separation = this.calculateSeparation(bird, neighbors, config);
+    // Calculate each rule (results stored in temp vectors)
+    this.calculateAlignment(bird, neighbors, config);
+    this.calculateCohesion(bird, neighbors, config);
+    this.calculateSeparation(bird, neighbors, config);
     
-    // Apply weights
-    alignment.mult(config.alignmentWeight);
-    cohesion.mult(config.cohesionWeight);
-    separation.mult(config.separationWeight);
-    
-    // Combine forces
-    force.add(alignment);
-    force.add(cohesion);
-    force.add(separation);
+    // Apply weights and combine (use tempForce as accumulator)
+    outForce.x = tempAlignment.x * config.alignmentWeight +
+                 tempCohesion.x * config.cohesionWeight +
+                 tempSeparation.x * config.separationWeight;
+    outForce.y = tempAlignment.y * config.alignmentWeight +
+                 tempCohesion.y * config.cohesionWeight +
+                 tempSeparation.y * config.separationWeight;
     
     // Add natural variation via noise
-    this.addNoise(bird, force, time, 0.05);
+    this.addNoise(bird, outForce, time, 0.05);
     
     // Limit total force
-    force.limit(config.maxForce * (1 + bird.panicLevel));
+    outForce.limit(config.maxForce * (1 + bird.panicLevel));
     
     // Update bird's local density (for visual feedback)
     bird.localDensity = neighbors.length;
-    
-    return force;
   }
 
   /**
@@ -113,18 +115,24 @@ export class SwarmRules {
    * 1. Sum all neighbor velocities (weighted by distance)
    * 2. Calculate average
    * 3. Steer toward that average
+   * 
+   * PERFORMANCE: Result stored in tempAlignment (no allocation)
    */
   private calculateAlignment(
     bird: Bird,
     neighbors: Bird[],
     config: ISimulationConfig
-  ): Vector2 {
+  ): void {
     tempAlignment.zero();
     let totalWeight = 0;
     
-    for (let i = 0; i < neighbors.length; i++) {
+    const len = neighbors.length;
+    for (let i = 0; i < len; i++) {
       const other = neighbors[i];
-      const distance = bird.position.dist(other.position);
+      // Use squared distance when possible (avoid sqrt)
+      const dx = bird.position.x - other.position.x;
+      const dy = bird.position.y - other.position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
       
       // Distance-weighted influence (closer = stronger)
       const weight = 1 - (distance / config.perceptionRadius);
@@ -143,8 +151,6 @@ export class SwarmRules {
       tempAlignment.sub(bird.velocity);
       tempAlignment.limit(config.maxForce);
     }
-    
-    return tempAlignment.clone();
   }
 
   /**
@@ -153,22 +159,22 @@ export class SwarmRules {
    * Calculate steering force toward the center of nearby birds.
    * This keeps the flock together as a cohesive group.
    * 
-   * Process:
-   * 1. Find center of mass of neighbors
-   * 2. Steer toward that center
-   * 3. Reduce strength in high-density areas (density adaptation)
+   * PERFORMANCE: Result stored in tempCohesion (no allocation)
    */
   private calculateCohesion(
     bird: Bird,
     neighbors: Bird[],
     config: ISimulationConfig
-  ): Vector2 {
+  ): void {
     tempCohesion.zero();
     let totalWeight = 0;
     
-    for (let i = 0; i < neighbors.length; i++) {
+    const len = neighbors.length;
+    for (let i = 0; i < len; i++) {
       const other = neighbors[i];
-      const distance = bird.position.dist(other.position);
+      const dx = bird.position.x - other.position.x;
+      const dy = bird.position.y - other.position.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
       
       // Distance-weighted influence
       const weight = 1 - (distance / config.perceptionRadius);
@@ -186,7 +192,7 @@ export class SwarmRules {
       tempCohesion.sub(bird.position);
       
       // Density adaptation: reduce cohesion when crowded
-      const densityFactor = Math.max(0.3, 1 - neighbors.length / 20);
+      const densityFactor = Math.max(0.3, 1 - len / 20);
       tempCohesion.mult(densityFactor);
       
       // Steering
@@ -194,8 +200,6 @@ export class SwarmRules {
       tempCohesion.sub(bird.velocity);
       tempCohesion.limit(config.maxForce);
     }
-    
-    return tempCohesion.clone();
   }
 
   /**
@@ -204,34 +208,33 @@ export class SwarmRules {
    * Calculate steering force to avoid crowding neighbors.
    * This prevents collisions and maintains comfortable spacing.
    * 
-   * Process:
-   * 1. For each nearby bird, calculate a repulsion vector
-   * 2. Weight by inverse square of distance (closer = stronger)
-   * 3. Sum all repulsion vectors
+   * PERFORMANCE: Result stored in tempSeparation (no allocation)
    */
   private calculateSeparation(
     bird: Bird,
     neighbors: Bird[],
     config: ISimulationConfig
-  ): Vector2 {
+  ): void {
     tempSeparation.zero();
     let count = 0;
     
-    for (let i = 0; i < neighbors.length; i++) {
+    const sepRadiusSq = config.separationRadius * config.separationRadius;
+    const len = neighbors.length;
+    
+    for (let i = 0; i < len; i++) {
       const other = neighbors[i];
-      const distance = bird.position.dist(other.position);
+      const dx = bird.position.x - other.position.x;
+      const dy = bird.position.y - other.position.y;
+      const distSq = dx * dx + dy * dy;
       
       // Only apply separation within separation radius
-      if (distance < config.separationRadius && distance > 0) {
-        // Vector pointing away from neighbor
-        tempDiff.copy(bird.position).sub(other.position);
+      if (distSq < sepRadiusSq && distSq > 0) {
+        const distance = Math.sqrt(distSq);
         
-        // Weight by inverse square of distance
-        // Closer birds create much stronger repulsion
-        tempDiff.normalize();
-        tempDiff.div(distance * distance);
-        
-        tempSeparation.add(tempDiff);
+        // Vector pointing away from neighbor, weighted by inverse square
+        const invDistSq = 1 / distSq;
+        tempSeparation.x += (dx / distance) * invDistSq;
+        tempSeparation.y += (dy / distance) * invDistSq;
         count++;
       }
     }
@@ -245,8 +248,6 @@ export class SwarmRules {
         tempSeparation.limit(config.maxForce);
       }
     }
-    
-    return tempSeparation.clone();
   }
 
   /**
@@ -277,62 +278,75 @@ export class SwarmRules {
   /**
    * Apply panic response to escape from predator
    * Birds flee and spread panic to neighbors
+   * PERFORMANCE: Uses output parameter, zero allocations
    */
   calculatePanicResponse(
     bird: Bird,
     predatorPosition: Vector2,
     panicRadius: number,
-    maxForce: number
-  ): Vector2 {
-    const distance = bird.position.dist(predatorPosition);
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    const dx = bird.position.x - predatorPosition.x;
+    const dy = bird.position.y - predatorPosition.y;
+    const distSq = dx * dx + dy * dy;
+    const panicRadiusSq = panicRadius * panicRadius;
     
-    if (distance < panicRadius) {
+    if (distSq < panicRadiusSq) {
+      const distance = Math.sqrt(distSq);
+      
       // Calculate panic level based on distance (closer = more panic)
       const panicLevel = 1 - (distance / panicRadius);
       bird.applyPanic(panicLevel);
       
       // Flee force (away from predator)
-      tempSteer.copy(bird.position).sub(predatorPosition);
-      tempSteer.normalize();
-      
-      // Stronger flee when closer
-      tempSteer.mult(maxForce * (1 + panicLevel * 2));
-      
-      return tempSteer.clone();
+      if (distance > 0) {
+        const forceMag = maxForce * (1 + panicLevel * 2);
+        outForce.x = (dx / distance) * forceMag;
+        outForce.y = (dy / distance) * forceMag;
+      } else {
+        outForce.zero();
+      }
+    } else {
+      outForce.zero();
     }
-    
-    return new Vector2();
   }
 
   /**
    * Calculate attractor/repulsor influence
+   * PERFORMANCE: Uses output parameter, zero allocations
    */
   calculateAttractorForce(
     bird: Bird,
-    attractorPosition: Vector2,
+    attractorX: number,
+    attractorY: number,
     strength: number,
     radius: number,
     isRepulsor: boolean,
-    maxForce: number
-  ): Vector2 {
-    const distance = bird.position.dist(attractorPosition);
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    const dx = attractorX - bird.position.x;
+    const dy = attractorY - bird.position.y;
+    const distSq = dx * dx + dy * dy;
+    const radiusSq = radius * radius;
     
-    if (distance < radius && distance > 0) {
-      // Direction to/from attractor
-      tempSteer.copy(attractorPosition).sub(bird.position);
-      
-      if (isRepulsor) {
-        tempSteer.mult(-1); // Reverse for repulsion
-      }
+    if (distSq < radiusSq && distSq > 0) {
+      const distance = Math.sqrt(distSq);
       
       // Strength falls off with distance
       const factor = 1 - (distance / radius);
-      tempSteer.normalize().mult(strength * factor * maxForce);
+      let forceMag = strength * factor * maxForce;
       
-      return tempSteer.clone();
+      if (isRepulsor) {
+        forceMag = -forceMag;
+      }
+      
+      outForce.x = (dx / distance) * forceMag;
+      outForce.y = (dy / distance) * forceMag;
+    } else {
+      outForce.zero();
     }
-    
-    return new Vector2();
   }
 
   /**

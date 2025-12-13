@@ -1,18 +1,39 @@
 /**
  * Starling Swarm Simulator - Main Entry Point
- * Version: 1.0.0
+ * Version: 1.2.0 - Config from JSON, creature presets, food mechanics
  * 
  * A real-time starling murmuration simulator demonstrating
  * emergent swarm intelligence through simple interaction rules.
+ * 
+ * Configuration is loaded from /config.json at startup.
  */
 
 import { App } from './App';
+import { loadConfig, setConfig } from './config/ConfigLoader';
 
-console.log('🐦 Starling Swarm Simulator v1.0.0');
+const VERSION = '1.2.0';
+
+console.log(`🐦 Starling Swarm Simulator v${VERSION}`);
+
+// Update loading text
+function setLoadingText(text: string): void {
+  const loadingText = document.querySelector('.loading-text');
+  if (loadingText) {
+    loadingText.textContent = text;
+  }
+}
 
 // Initialize the application when DOM is ready
 document.addEventListener('DOMContentLoaded', async () => {
   try {
+    // Step 1: Load configuration from JSON
+    setLoadingText('Loading configuration...');
+    const config = await loadConfig('/config.json');
+    setConfig(config);
+    console.log(`📋 Config loaded: v${config.version}`);
+    
+    // Step 2: Create and initialize the app
+    setLoadingText('Initializing simulation...');
     const app = new App();
     await app.initialize();
     

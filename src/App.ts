@@ -1,12 +1,13 @@
 /**
  * Main Application - Orchestrates the entire simulation
- * Version: 1.0.0
+ * Version: 1.2.0 - Extended with creature presets, food, and visual customization
  * 
  * This is the central hub that:
  * - Initializes PixiJS renderer
  * - Creates and manages all subsystems
  * - Handles the main game loop
  * - Coordinates user input
+ * - Manages creature presets and food sources
  */
 
 import * as PIXI from 'pixi.js';
@@ -17,13 +18,14 @@ import { TrailEffect } from './rendering/TrailEffect';
 import { ControlPanel } from './ui/ControlPanel';
 import { Statistics } from './ui/Statistics';
 import { Predator } from './environment/Predator';
+import { FoodSourceManager } from './environment/FoodSource';
 import { Vector2 } from './utils/Vector2';
-import {
-  DEFAULT_SIMULATION_CONFIG,
-  DEFAULT_ENVIRONMENT_CONFIG,
-  DEFAULT_RENDERING_CONFIG
-} from './types';
-import type { ISimulationConfig, IEnvironmentConfig, IRenderingConfig } from './types';
+import { getConfig, type ILoadedConfig } from './config/ConfigLoader';
+import type { ISimulationConfig, IEnvironmentConfig, IRenderingConfig, CreaturePreset, ICreaturePreset } from './types';
+
+// Pre-allocated vector for flock center calculation
+const tempFlockCenter = new Vector2();
+const tempFoodForce = new Vector2();
 
 export class App {
   /** PixiJS Application */
@@ -53,10 +55,16 @@ export class App {
   /** Predator AI */
   private predator!: Predator;
   
+  /** Food source manager */
+  private foodManager!: FoodSourceManager;
+  
   /** Configuration */
   private simConfig: ISimulationConfig;
   private envConfig: IEnvironmentConfig;
   private renderConfig: IRenderingConfig;
+  
+  /** Loaded config with presets */
+  private loadedConfig: ILoadedConfig;
   
   /** Simulation dimensions */
   private width: number = 0;
@@ -72,10 +80,13 @@ export class App {
     // Get canvas element
     this.canvas = document.getElementById('simulation-canvas') as HTMLCanvasElement;
     
-    // Initialize configs with defaults
-    this.simConfig = { ...DEFAULT_SIMULATION_CONFIG };
-    this.envConfig = { ...DEFAULT_ENVIRONMENT_CONFIG };
-    this.renderConfig = { ...DEFAULT_RENDERING_CONFIG };
+    // Get loaded config (must be loaded before App is created)
+    this.loadedConfig = getConfig();
+    
+    // Initialize configs from loaded JSON
+    this.simConfig = { ...this.loadedConfig.simulation };
+    this.envConfig = { ...this.loadedConfig.environment };
+    this.renderConfig = { ...this.loadedConfig.rendering };
   }
 
   /**
@@ -107,6 +118,9 @@ export class App {
     
     // Initialize predator
     this.predator = new Predator(this.width, this.height);
+    
+    // Initialize food manager
+    this.foodManager = new FoodSourceManager(this.width, this.height);
     
     // Initialize renderers
     this.flockRenderer = new FlockRenderer(this.renderConfig);
@@ -169,10 +183,62 @@ export class App {
         },
         onTrailsToggle: (enabled) => {
           this.trailEffect.setEnabled(enabled);
-          this.flockRenderer.setTrailsEnabled(false); // Use dedicated trail effect
+          this.flockRenderer.setTrailsEnabled(false);
+        },
+        onPresetChange: (preset: CreaturePreset) => {
+          this.applyPreset(preset);
+        },
+        onFoodToggle: (enabled) => {
+          if (enabled) {
+            this.foodManager.initialize(this.envConfig);
+          } else {
+            this.foodManager.clear();
+          }
+        },
+        onColorChange: () => {
+          this.updateColors();
         }
       }
     );
+  }
+
+  /**
+   * Apply a creature preset
+   */
+  private applyPreset(preset: CreaturePreset): void {
+    const presetConfig = this.getPreset(preset);
+    
+    // Update flock renderer visuals
+    this.flockRenderer.setParticleSize(presetConfig.particleSize);
+    this.flockRenderer.setColorTheme(
+      presetConfig.baseColor,
+      presetConfig.denseColor,
+      presetConfig.panicColor
+    );
+    this.flockRenderer.setGlowEnabled(presetConfig.glowEnabled);
+    this.flockRenderer.setGlowIntensity(presetConfig.glowIntensity);
+    
+    // Update trail effect colors
+    this.trailEffect.setColor(presetConfig.baseColor);
+  }
+
+  /**
+   * Get a creature preset from loaded config
+   */
+  private getPreset(preset: CreaturePreset): ICreaturePreset {
+    return this.loadedConfig.creaturePresets[preset];
+  }
+
+  /**
+   * Update colors from control panel
+   */
+  private updateColors(): void {
+    this.flockRenderer.setColorTheme(
+      this.renderConfig.baseColor,
+      this.renderConfig.denseColor,
+      this.renderConfig.panicColor
+    );
+    this.trailEffect.setColor(this.renderConfig.baseColor);
   }
 
   /**
@@ -206,6 +272,7 @@ export class App {
     this.flock.resize(this.width, this.height);
     this.envRenderer.resize(this.width, this.height);
     this.predator.resize(this.width, this.height);
+    this.foodManager.resize(this.width, this.height);
   }
 
   /**
@@ -223,14 +290,19 @@ export class App {
   }
 
   /**
-   * Handle left click - add attractor
+   * Handle left click - add attractor or food
    */
   private handleClick(event: MouseEvent): void {
     const rect = this.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     
-    this.flock.addAttractor(x, y, 1.0, 150, 8, false);
+    // Add food if food mode is enabled, otherwise add attractor
+    if (this.envConfig.foodEnabled && event.shiftKey) {
+      this.foodManager.spawnFood(x, y, this.envConfig.foodAttractionRadius);
+    } else {
+      this.flock.addAttractor(x, y, 1.0, 150, 8, false);
+    }
   }
 
   /**
@@ -301,7 +373,13 @@ export class App {
     
     // Update rendering options
     this.flockRenderer.setColorByDensity(this.renderConfig.colorByDensity);
+    this.flockRenderer.setColorBySpeed(this.renderConfig.colorBySpeed);
     this.flockRenderer.setTrailLength(this.renderConfig.trailLength);
+    this.flockRenderer.setShape(this.renderConfig.particleShape);
+    this.flockRenderer.setParticleSize(this.simConfig.particleSize);
+    this.flockRenderer.setGlowEnabled(this.renderConfig.glowEnabled);
+    this.flockRenderer.setGlowIntensity(this.renderConfig.glowIntensity);
+    
     this.trailEffect.setMaxLength(this.renderConfig.trailLength);
     this.envRenderer.setWindParticlesEnabled(this.renderConfig.showWindParticles);
     this.envRenderer.setPredatorRangeEnabled(this.renderConfig.showPredatorRange);
@@ -320,6 +398,12 @@ export class App {
       this.flock.setPredatorPosition(null);
     }
     
+    // Update food sources
+    if (this.envConfig.foodEnabled) {
+      this.foodManager.update(deltaTime, this.envConfig);
+      this.applyFoodAttraction();
+    }
+    
     // Update flock
     this.flock.update(deltaTime);
     
@@ -330,22 +414,48 @@ export class App {
   }
 
   /**
+   * Apply food attraction forces to birds
+   */
+  private applyFoodAttraction(): void {
+    const birds = this.flock.birds;
+    const strength = this.envConfig.foodAttractionStrength;
+    const radius = this.envConfig.foodAttractionRadius;
+    
+    for (let i = 0; i < birds.length; i++) {
+      const bird = birds[i];
+      
+      if (this.foodManager.getAttractionForce(bird.position, strength * 0.3, radius, tempFoodForce)) {
+        bird.applyForce(tempFoodForce);
+        
+        // Try to consume food if very close
+        this.foodManager.consume(bird.position, 0.1);
+      }
+    }
+  }
+
+  /**
    * Calculate center of flock
    */
   private calculateFlockCenter(): Vector2 {
-    const center = new Vector2();
+    tempFlockCenter.x = 0;
+    tempFlockCenter.y = 0;
     
-    if (this.flock.birds.length === 0) {
-      return center.set(this.width / 2, this.height / 2);
+    const birds = this.flock.birds;
+    const len = birds.length;
+    
+    if (len === 0) {
+      return tempFlockCenter.set(this.width / 2, this.height / 2);
     }
     
-    for (const bird of this.flock.birds) {
-      center.x += bird.position.x;
-      center.y += bird.position.y;
+    for (let i = 0; i < len; i++) {
+      tempFlockCenter.x += birds[i].position.x;
+      tempFlockCenter.y += birds[i].position.y;
     }
     
-    center.div(this.flock.birds.length);
-    return center;
+    tempFlockCenter.x /= len;
+    tempFlockCenter.y /= len;
+    
+    return tempFlockCenter;
   }
 
   /**
@@ -353,14 +463,20 @@ export class App {
    */
   private render(): void {
     // Update flock renderer
-    this.flockRenderer.update(this.flock.birds);
+    this.flockRenderer.update(this.flock.birds, this.simConfig);
+    
+    // Get food sources for rendering
+    const foodSources = this.envConfig.foodEnabled && this.renderConfig.showFoodSources
+      ? this.foodManager.getAll()
+      : [];
     
     // Update environment renderer
     this.envRenderer.update(
-      1 / 60, // Use fixed delta for smoother visuals
+      1 / 60,
       this.envConfig,
       this.envConfig.predatorEnabled ? this.predator.position : null,
-      this.flock.getAttractors()
+      this.flock.getAttractors(),
+      foodSources
     );
   }
 
@@ -370,6 +486,8 @@ export class App {
   private updateStatistics(): void {
     const stats = this.flock.getStats();
     stats.predatorState = this.predator.state;
+    stats.foodConsumed = Math.floor(this.foodManager.totalConsumed);
+    stats.activeFood = this.foodManager.getActiveCount();
     this.statistics.update(stats);
     this.flock.setFPS(this.statistics.getFps());
   }
@@ -381,6 +499,8 @@ export class App {
     this.flock.reset();
     this.predator.reset();
     this.trailEffect.clear();
+    this.foodManager.initialize(this.envConfig);
+    this.foodManager.resetStats();
     this.flockRenderer.syncBirdCount(this.simConfig.birdCount);
   }
 
@@ -396,4 +516,3 @@ export class App {
     this.app.destroy(true);
   }
 }
-

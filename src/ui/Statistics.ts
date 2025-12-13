@@ -1,6 +1,6 @@
 /**
  * Statistics Display - Real-time telemetry updates
- * Version: 1.0.0
+ * Version: 1.1.0 - Extended with food stats
  * 
  * Updates the HTML statistics panel with current simulation data.
  */
@@ -75,17 +75,23 @@ export class Statistics {
     }
     
     if (this.predatorElement) {
-      this.predatorElement.textContent = this.capitalizeFirst(stats.predatorState);
-      // Color code predator state
-      switch (stats.predatorState) {
-        case 'hunting':
-          this.predatorElement.style.color = '#ffaa00';
-          break;
-        case 'attacking':
-          this.predatorElement.style.color = '#ff6666';
-          break;
-        default:
-          this.predatorElement.style.color = 'var(--text-muted)';
+      // Show food info when available, otherwise predator state
+      if (stats.activeFood !== undefined && stats.activeFood > 0) {
+        this.predatorElement.textContent = `${stats.activeFood} Food`;
+        this.predatorElement.style.color = '#88ff88';
+      } else {
+        this.predatorElement.textContent = this.capitalizeFirst(stats.predatorState);
+        // Color code predator state
+        switch (stats.predatorState) {
+          case 'hunting':
+            this.predatorElement.style.color = '#ffaa00';
+            break;
+          case 'attacking':
+            this.predatorElement.style.color = '#ff6666';
+            break;
+          default:
+            this.predatorElement.style.color = 'var(--text-muted)';
+        }
       }
     }
   }

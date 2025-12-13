@@ -1,22 +1,22 @@
 /**
- * Flock Renderer - High-performance PixiJS rendering for birds
- * Version: 1.0.0
+ * Flock Renderer - High-performance PixiJS rendering for creatures
+ * Version: 1.2.0 - Extended with particle shapes, glow, and color modes
  * 
  * Uses PixiJS Container with optimized sprite batching
- * for rendering thousands of birds at 60fps.
+ * for rendering thousands of creatures at 60fps.
  * 
  * Features:
- * - Efficient sprite batching
- * - Dynamic color based on local density
- * - Rotation matches velocity direction
- * - Panic state visual feedback
- * - Motion trails (optional)
+ * - Multiple particle shapes (arrow, circle, triangle, dot)
+ * - Dynamic color based on density, speed, or panic
+ * - Configurable particle size
+ * - Optional glow effects
+ * - Motion trails
  */
 
 import * as PIXI from 'pixi.js';
 import type { Bird } from '../simulation/Bird';
-import type { IRenderingConfig } from '../types';
-import { hslToHex, lerpColor, clamp, map } from '../utils/MathUtils';
+import type { IRenderingConfig, ISimulationConfig } from '../types';
+import { lerpColor, clamp } from '../utils/MathUtils';
 
 export class FlockRenderer {
   /** PixiJS container for all bird sprites */
@@ -25,8 +25,20 @@ export class FlockRenderer {
   /** Individual bird sprites */
   private sprites: PIXI.Sprite[] = [];
   
-  /** Bird sprite texture (generated procedurally) */
-  private birdTexture: PIXI.Texture;
+  /** Bird sprite textures for different shapes */
+  private textures: Map<string, PIXI.Texture> = new Map();
+  
+  /** Current texture in use */
+  private currentTexture: PIXI.Texture;
+  
+  /** Glow container */
+  private glowContainer: PIXI.Container | null = null;
+  
+  /** Glow sprites */
+  private glowSprites: PIXI.Sprite[] = [];
+  
+  /** Glow texture */
+  private glowTexture: PIXI.Texture | null = null;
   
   /** Trail container (optional) */
   private trailContainer: PIXI.Container | null = null;
@@ -34,17 +46,16 @@ export class FlockRenderer {
   /** Trail graphics */
   private trails: PIXI.Graphics[] = [];
   
-  /** Base color for birds */
+  /** Color settings */
   private baseColor: number = 0x00d4ff;
-  
-  /** Panic color */
   private panicColor: number = 0xff3366;
-  
-  /** Dense flock color */
   private denseColor: number = 0x8b5cf6;
   
   /** Rendering configuration */
   private config: IRenderingConfig;
+  
+  /** Current particle size */
+  private particleSize: number = 1.0;
 
   constructor(config: IRenderingConfig) {
     this.config = config;
@@ -52,8 +63,19 @@ export class FlockRenderer {
     // Create main container
     this.container = new PIXI.Container();
     
-    // Generate bird texture
-    this.birdTexture = this.createBirdTexture();
+    // Generate all textures
+    this.generateTextures();
+    this.currentTexture = this.textures.get(config.particleShape) || this.textures.get('arrow')!;
+    
+    // Apply initial colors
+    this.baseColor = config.baseColor;
+    this.denseColor = config.denseColor;
+    this.panicColor = config.panicColor;
+    
+    // Create glow container if enabled
+    if (config.glowEnabled) {
+      this.setupGlow();
+    }
     
     // Create trail container if enabled
     if (config.showTrails) {
@@ -63,28 +85,131 @@ export class FlockRenderer {
   }
 
   /**
-   * Create procedural bird texture (arrow/chevron shape)
+   * Generate all particle shape textures
    */
-  private createBirdTexture(): PIXI.Texture {
+  private generateTextures(): void {
+    // Arrow shape
+    this.textures.set('arrow', this.createArrowTexture());
+    
+    // Circle shape
+    this.textures.set('circle', this.createCircleTexture());
+    
+    // Triangle shape
+    this.textures.set('triangle', this.createTriangleTexture());
+    
+    // Dot shape
+    this.textures.set('dot', this.createDotTexture());
+    
+    // Glow texture
+    this.glowTexture = this.createGlowTexture();
+  }
+
+  /**
+   * Create arrow texture
+   */
+  private createArrowTexture(): PIXI.Texture {
     const canvas = document.createElement('canvas');
     canvas.width = 16;
     canvas.height = 16;
     const ctx = canvas.getContext('2d')!;
     
-    // Draw a stylized bird shape (chevron/arrow)
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    
-    // Arrow pointing right (will be rotated by sprite)
-    ctx.moveTo(14, 8);  // Tip
-    ctx.lineTo(2, 2);   // Top back
-    ctx.lineTo(5, 8);   // Center back indent
-    ctx.lineTo(2, 14);  // Bottom back
+    ctx.moveTo(14, 8);
+    ctx.lineTo(2, 2);
+    ctx.lineTo(5, 8);
+    ctx.lineTo(2, 14);
     ctx.closePath();
-    
     ctx.fill();
     
     return PIXI.Texture.from(canvas);
+  }
+
+  /**
+   * Create circle texture
+   */
+  private createCircleTexture(): PIXI.Texture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d')!;
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(8, 8, 6, 0, Math.PI * 2);
+    ctx.fill();
+    
+    return PIXI.Texture.from(canvas);
+  }
+
+  /**
+   * Create triangle texture
+   */
+  private createTriangleTexture(): PIXI.Texture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d')!;
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(14, 8);
+    ctx.lineTo(2, 3);
+    ctx.lineTo(2, 13);
+    ctx.closePath();
+    ctx.fill();
+    
+    return PIXI.Texture.from(canvas);
+  }
+
+  /**
+   * Create dot texture
+   */
+  private createDotTexture(): PIXI.Texture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    const ctx = canvas.getContext('2d')!;
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(4, 4, 3, 0, Math.PI * 2);
+    ctx.fill();
+    
+    return PIXI.Texture.from(canvas);
+  }
+
+  /**
+   * Create glow texture
+   */
+  private createGlowTexture(): PIXI.Texture {
+    const canvas = document.createElement('canvas');
+    const size = 32;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    
+    const gradient = ctx.createRadialGradient(
+      size / 2, size / 2, 0,
+      size / 2, size / 2, size / 2
+    );
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+    gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.3)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    
+    return PIXI.Texture.from(canvas);
+  }
+
+  /**
+   * Setup glow effect layer
+   */
+  private setupGlow(): void {
+    this.glowContainer = new PIXI.Container();
+    this.glowContainer.alpha = this.config.glowIntensity;
+    this.container.addChildAt(this.glowContainer, 0);
   }
 
   /**
@@ -95,17 +220,100 @@ export class FlockRenderer {
   }
 
   /**
+   * Set particle shape
+   */
+  setShape(shape: string): void {
+    const texture = this.textures.get(shape);
+    if (texture && texture !== this.currentTexture) {
+      this.currentTexture = texture;
+      
+      // Update all sprites
+      for (const sprite of this.sprites) {
+        sprite.texture = this.currentTexture;
+      }
+    }
+  }
+
+  /**
+   * Set particle size
+   */
+  setParticleSize(size: number): void {
+    this.particleSize = size;
+  }
+
+  /**
+   * Set color theme
+   */
+  setColorTheme(base: number, dense: number, panic: number): void {
+    this.baseColor = base;
+    this.denseColor = dense;
+    this.panicColor = panic;
+  }
+
+  /**
+   * Set glow enabled
+   */
+  setGlowEnabled(enabled: boolean): void {
+    this.config.glowEnabled = enabled;
+    
+    if (enabled && !this.glowContainer) {
+      this.setupGlow();
+      this.syncGlowSprites(this.sprites.length);
+    } else if (!enabled && this.glowContainer) {
+      this.container.removeChild(this.glowContainer);
+      this.glowContainer.destroy({ children: true });
+      this.glowContainer = null;
+      this.glowSprites = [];
+    }
+  }
+
+  /**
+   * Set glow intensity
+   */
+  setGlowIntensity(intensity: number): void {
+    this.config.glowIntensity = intensity;
+    if (this.glowContainer) {
+      this.glowContainer.alpha = intensity;
+    }
+  }
+
+  /**
+   * Sync glow sprites with bird count
+   */
+  private syncGlowSprites(count: number): void {
+    if (!this.glowContainer || !this.glowTexture) return;
+    
+    const currentCount = this.glowSprites.length;
+    
+    if (count > currentCount) {
+      for (let i = currentCount; i < count; i++) {
+        const sprite = new PIXI.Sprite(this.glowTexture);
+        sprite.anchor.set(0.5, 0.5);
+        sprite.scale.set(1.5);
+        sprite.blendMode = 'add';
+        this.glowSprites.push(sprite);
+        this.glowContainer.addChild(sprite);
+      }
+    } else if (count < currentCount) {
+      for (let i = currentCount - 1; i >= count; i--) {
+        const sprite = this.glowSprites.pop()!;
+        this.glowContainer.removeChild(sprite);
+        sprite.destroy();
+      }
+    }
+  }
+
+  /**
    * Update sprites to match bird count
    */
   syncBirdCount(count: number): void {
     const currentCount = this.sprites.length;
     
     if (count > currentCount) {
-      // Add new sprites
       for (let i = currentCount; i < count; i++) {
-        const sprite = new PIXI.Sprite(this.birdTexture);
+        const sprite = new PIXI.Sprite(this.currentTexture);
         sprite.anchor.set(0.5, 0.5);
-        sprite.scale.set(0.8);
+        sprite.scale.set(0.8 * this.particleSize);
         this.sprites.push(sprite);
         this.container.addChild(sprite);
         
@@ -118,7 +326,6 @@ export class FlockRenderer {
         }
       }
     } else if (count < currentCount) {
-      // Remove excess sprites
       for (let i = currentCount - 1; i >= count; i--) {
         const sprite = this.sprites.pop()!;
         this.container.removeChild(sprite);
@@ -131,19 +338,30 @@ export class FlockRenderer {
         }
       }
     }
+    
+    // Sync glow sprites
+    if (this.config.glowEnabled) {
+      this.syncGlowSprites(count);
+    }
   }
 
   /**
    * Update all bird sprites
    */
-  update(birds: Bird[]): void {
+  update(birds: Bird[], simConfig: ISimulationConfig): void {
     // Ensure sprite count matches
     if (this.sprites.length !== birds.length) {
       this.syncBirdCount(birds.length);
     }
     
+    // Update particle size from config
+    if (this.particleSize !== simConfig.particleSize) {
+      this.particleSize = simConfig.particleSize;
+    }
+    
     // Update each sprite
-    for (let i = 0; i < birds.length; i++) {
+    const len = birds.length;
+    for (let i = 0; i < len; i++) {
       const bird = birds[i];
       const sprite = this.sprites[i];
       
@@ -157,12 +375,21 @@ export class FlockRenderer {
       // Color based on state
       sprite.tint = this.calculateBirdColor(bird);
       
-      // Scale based on speed (subtle)
+      // Scale based on size config and speed (subtle)
       const speedScale = 0.7 + clamp(bird.speed / 20, 0, 0.5);
-      sprite.scale.set(speedScale);
+      sprite.scale.set(speedScale * this.particleSize);
       
       // Alpha based on panic (slight fade when calm)
       sprite.alpha = 0.85 + bird.panicLevel * 0.15;
+      
+      // Update glow sprite if enabled
+      if (this.config.glowEnabled && this.glowSprites[i]) {
+        const glow = this.glowSprites[i];
+        glow.x = bird.position.x;
+        glow.y = bird.position.y;
+        glow.tint = sprite.tint;
+        glow.scale.set(1.5 * this.particleSize * (0.8 + Math.sin(bird.id * 0.5 + Date.now() * 0.003) * 0.2));
+      }
     }
     
     // Update trails if enabled
@@ -173,22 +400,20 @@ export class FlockRenderer {
 
   /**
    * Calculate bird color based on state
-   * - Base color: Cyan (#00d4ff)
-   * - Dense areas: Violet (#8b5cf6)
-   * - Panic: Red (#ff3366)
    */
   private calculateBirdColor(bird: Bird): number {
-    if (!this.config.colorByDensity) {
-      // Simple panic-based coloring
-      if (bird.panicLevel > 0.1) {
-        return lerpColor(this.baseColor, this.panicColor, bird.panicLevel);
-      }
-      return this.baseColor;
-    }
+    let color = this.baseColor;
     
-    // Density-based coloring
-    const densityFactor = clamp(bird.localDensity / 15, 0, 1);
-    let color = lerpColor(this.baseColor, this.denseColor, densityFactor);
+    // Color by speed
+    if (this.config.colorBySpeed) {
+      const speedFactor = clamp(bird.speed / 20, 0, 1);
+      color = lerpColor(this.baseColor, this.denseColor, speedFactor);
+    }
+    // Color by density
+    else if (this.config.colorByDensity) {
+      const densityFactor = clamp(bird.localDensity / 15, 0, 1);
+      color = lerpColor(this.baseColor, this.denseColor, densityFactor);
+    }
     
     // Overlay panic color
     if (bird.panicLevel > 0.1) {
@@ -199,12 +424,13 @@ export class FlockRenderer {
   }
 
   /**
-   * Update motion trails (optional feature)
+   * Update motion trails
    */
   private updateTrails(birds: Bird[]): void {
     if (!this.trailContainer) return;
     
-    for (let i = 0; i < birds.length && i < this.trails.length; i++) {
+    const len = Math.min(birds.length, this.trails.length);
+    for (let i = 0; i < len; i++) {
       const bird = birds[i];
       const trail = this.trails[i];
       
@@ -219,12 +445,11 @@ export class FlockRenderer {
       // Draw trail as line behind bird
       trail.moveTo(bird.position.x, bird.position.y);
       
-      // Calculate tail position (opposite of heading)
       const tailX = bird.position.x - Math.cos(bird.heading) * bird.speed * trailLength;
       const tailY = bird.position.y - Math.sin(bird.heading) * bird.speed * trailLength;
       
       trail.lineTo(tailX, tailY);
-      trail.stroke({ width: 1.5, color, alpha: 0.4 });
+      trail.stroke({ width: 1.5 * this.particleSize, color, alpha: 0.4 });
     }
   }
 
@@ -238,7 +463,6 @@ export class FlockRenderer {
       this.trailContainer = new PIXI.Container();
       this.container.addChildAt(this.trailContainer, 0);
       
-      // Create trail graphics for existing sprites
       for (let i = 0; i < this.sprites.length; i++) {
         const trail = new PIXI.Graphics();
         trail.alpha = 0.3;
@@ -246,7 +470,6 @@ export class FlockRenderer {
         this.trailContainer.addChild(trail);
       }
     } else if (!enabled && this.trailContainer) {
-      // Remove trail container
       this.container.removeChild(this.trailContainer);
       this.trailContainer.destroy({ children: true });
       this.trailContainer = null;
@@ -255,10 +478,19 @@ export class FlockRenderer {
   }
 
   /**
-   * Set whether to color by density
+   * Set color by density mode
    */
   setColorByDensity(enabled: boolean): void {
     this.config.colorByDensity = enabled;
+    if (enabled) this.config.colorBySpeed = false;
+  }
+
+  /**
+   * Set color by speed mode
+   */
+  setColorBySpeed(enabled: boolean): void {
+    this.config.colorBySpeed = enabled;
+    if (enabled) this.config.colorByDensity = false;
   }
 
   /**
@@ -269,16 +501,7 @@ export class FlockRenderer {
   }
 
   /**
-   * Set base color theme
-   */
-  setColorTheme(base: number, dense: number, panic: number): void {
-    this.baseColor = base;
-    this.denseColor = dense;
-    this.panicColor = panic;
-  }
-
-  /**
-   * Get sprite count (for debugging)
+   * Get sprite count
    */
   getSpriteCount(): number {
     return this.sprites.length;
@@ -293,6 +516,11 @@ export class FlockRenderer {
     }
     this.sprites = [];
     
+    for (const sprite of this.glowSprites) {
+      sprite.destroy();
+    }
+    this.glowSprites = [];
+    
     for (const trail of this.trails) {
       trail.destroy();
     }
@@ -302,6 +530,11 @@ export class FlockRenderer {
       this.trailContainer.destroy({ children: true });
       this.trailContainer = null;
     }
+    
+    if (this.glowContainer) {
+      this.glowContainer.destroy({ children: true });
+      this.glowContainer = null;
+    }
   }
 
   /**
@@ -309,8 +542,13 @@ export class FlockRenderer {
    */
   destroy(): void {
     this.clear();
-    this.birdTexture.destroy(true);
+    for (const texture of this.textures.values()) {
+      texture.destroy(true);
+    }
+    this.textures.clear();
+    if (this.glowTexture) {
+      this.glowTexture.destroy(true);
+    }
     this.container.destroy({ children: true });
   }
 }
-

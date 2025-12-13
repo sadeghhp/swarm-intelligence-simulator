@@ -1,6 +1,6 @@
 /**
  * Spatial Grid - O(n) neighbor lookup for large flocks
- * Version: 1.0.0
+ * Version: 1.1.0 - Performance optimized
  * 
  * How it works:
  * 1. Divide the simulation space into a grid of cells
@@ -10,8 +10,7 @@
  * This reduces neighbor lookup from O(n²) to O(n * k)
  * where k is the average number of birds per cell.
  * 
- * Cell size should match or slightly exceed the perception radius
- * to ensure all potential neighbors are found efficiently.
+ * PERFORMANCE: Uses pre-allocated arrays to avoid GC pressure.
  */
 
 import type { Bird } from './Bird';
@@ -35,6 +34,12 @@ export class SpatialGrid {
   
   /** Total simulation height */
   private height: number;
+  
+  /** Pre-allocated arrays to avoid GC - reused each query */
+  private candidateBuffer: number[] = new Array(500);
+  private candidateCount: number = 0;
+  private neighborBuffer: Bird[] = new Array(100);
+  private neighborCount: number = 0;
 
   constructor(width: number, height: number, cellSize: number) {
     this.width = width;
@@ -121,12 +126,11 @@ export class SpatialGrid {
   }
 
   /**
-   * Get all bird indices in neighboring cells
-   * Returns indices of birds that MIGHT be within radius
-   * (actual distance check should be done by caller)
+   * Get all bird indices in neighboring cells (uses internal buffer)
+   * PERFORMANCE: No allocations - reuses candidateBuffer
    */
-  getNeighborIndices(position: IVector2, radius: number): number[] {
-    const results: number[] = [];
+  private fillCandidateBuffer(position: IVector2, radius: number): void {
+    this.candidateCount = 0;
     
     // Calculate cell range to check
     const minCol = Math.max(0, Math.floor((position.x - radius) / this.cellSize));
@@ -140,17 +144,31 @@ export class SpatialGrid {
         const cellIndex = row * this.cols + col;
         const cell = this.cells[cellIndex];
         for (let i = 0; i < cell.length; i++) {
-          results.push(cell[i]);
+          // Grow buffer if needed (rare)
+          if (this.candidateCount >= this.candidateBuffer.length) {
+            this.candidateBuffer.length = this.candidateBuffer.length * 2;
+          }
+          this.candidateBuffer[this.candidateCount++] = cell[i];
         }
       }
     }
-    
-    return results;
+  }
+
+  /**
+   * Get all bird indices in neighboring cells
+   * Returns indices of birds that MIGHT be within radius
+   * (actual distance check should be done by caller)
+   */
+  getNeighborIndices(position: IVector2, radius: number): number[] {
+    this.fillCandidateBuffer(position, radius);
+    // Return a slice for backward compatibility (avoid if possible)
+    return this.candidateBuffer.slice(0, this.candidateCount);
   }
 
   /**
    * Get neighbors with actual distance filtering
-   * More accurate but slightly slower than getNeighborIndices
+   * PERFORMANCE: Uses internal buffers, returns view into neighborBuffer
+   * Caller should use result immediately before next getNeighbors call
    */
   getNeighbors(
     bird: Bird,
@@ -159,11 +177,11 @@ export class SpatialGrid {
     fov?: number
   ): Bird[] {
     const radiusSq = radius * radius;
-    const candidates = this.getNeighborIndices(bird.position, radius);
-    const neighbors: Bird[] = [];
+    this.fillCandidateBuffer(bird.position, radius);
+    this.neighborCount = 0;
     
-    for (let i = 0; i < candidates.length; i++) {
-      const otherId = candidates[i];
+    for (let i = 0; i < this.candidateCount; i++) {
+      const otherId = this.candidateBuffer[i];
       
       // Skip self
       if (otherId === bird.id) continue;
@@ -175,12 +193,19 @@ export class SpatialGrid {
       if (distSq < radiusSq) {
         // Check field of view if specified
         if (fov === undefined || bird.isInFieldOfView(other.position, fov)) {
-          neighbors.push(other);
+          // Grow buffer if needed (rare)
+          if (this.neighborCount >= this.neighborBuffer.length) {
+            this.neighborBuffer.length = this.neighborBuffer.length * 2;
+          }
+          this.neighborBuffer[this.neighborCount++] = other;
         }
       }
     }
     
-    return neighbors;
+    // Return a view of the buffer (reuse the same array reference)
+    // This avoids allocation but caller must use immediately
+    this.neighborBuffer.length = this.neighborCount;
+    return this.neighborBuffer;
   }
 
   /**

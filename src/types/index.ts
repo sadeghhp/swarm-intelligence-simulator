@@ -1,6 +1,6 @@
 /**
  * Core TypeScript interfaces for the Starling Swarm Simulator
- * Version: 1.0.0
+ * Version: 1.2.0 - Extended with creature presets and food mechanics
  */
 
 /** 2D Vector representation */
@@ -18,10 +18,35 @@ export interface IBirdState {
   panicLevel: number;
 }
 
+/** Creature preset types */
+export type CreaturePreset = 'starlings' | 'insects' | 'fish' | 'bats' | 'fireflies' | 'custom';
+
+/** Creature preset configuration */
+export interface ICreaturePreset {
+  name: string;
+  description: string;
+  particleSize: number;
+  maxSpeed: number;
+  maxForce: number;
+  perceptionRadius: number;
+  separationRadius: number;
+  alignmentWeight: number;
+  cohesionWeight: number;
+  separationWeight: number;
+  fieldOfView: number;
+  baseColor: number;
+  denseColor: number;
+  panicColor: number;
+  glowEnabled: boolean;
+  glowIntensity: number;
+}
+
 /** Simulation configuration */
 export interface ISimulationConfig {
-  // Flock settings
+  // Creature settings
+  creaturePreset: CreaturePreset;
   birdCount: number;
+  particleSize: number;
   maxSpeed: number;
   maxForce: number;
   perceptionRadius: number;
@@ -38,10 +63,15 @@ export interface ISimulationConfig {
   // Boundary behavior
   boundaryMargin: number;
   boundaryForce: number;
+  wrapEdges: boolean;
   
   // Simulation
   simulationSpeed: number;
   paused: boolean;
+  
+  // Noise/randomness
+  noiseStrength: number;
+  wanderStrength: number;
 }
 
 /** Environment configuration */
@@ -57,6 +87,29 @@ export interface IEnvironmentConfig {
   predatorAggression: number;
   panicRadius: number;
   panicDecay: number;
+  
+  // Food sources
+  foodEnabled: boolean;
+  foodCount: number;
+  foodAttractionStrength: number;
+  foodAttractionRadius: number;
+  foodRespawnTime: number;
+  
+  // Hunting behavior (creatures hunting each other)
+  huntingEnabled: boolean;
+  huntingSpeed: number;
+  huntingRadius: number;
+}
+
+/** Food source */
+export interface IFoodSource {
+  id: number;
+  position: IVector2;
+  amount: number;
+  maxAmount: number;
+  radius: number;
+  respawnTimer: number;
+  consumed: boolean;
 }
 
 /** Statistics for display */
@@ -67,6 +120,8 @@ export interface ISimulationStats {
   averageVelocity: number;
   simulationTime: number;
   predatorState: 'idle' | 'hunting' | 'attacking';
+  foodConsumed: number;
+  activeFood: number;
 }
 
 /** Predator state */
@@ -107,44 +162,31 @@ export interface IRenderingConfig {
   trailLength: number;
   showWindParticles: boolean;
   showPredatorRange: boolean;
+  showFoodSources: boolean;
   colorByDensity: boolean;
+  colorBySpeed: boolean;
+  
+  // Visual customization
+  particleShape: 'arrow' | 'circle' | 'triangle' | 'dot';
+  baseColor: number;
+  denseColor: number;
+  panicColor: number;
+  
+  // Effects
+  glowEnabled: boolean;
+  glowIntensity: number;
+  motionBlur: boolean;
 }
 
-/** Default simulation configuration */
-export const DEFAULT_SIMULATION_CONFIG: ISimulationConfig = {
-  birdCount: 2000,
-  maxSpeed: 15,
-  maxForce: 0.5,
-  perceptionRadius: 50,
-  separationRadius: 25,
-  alignmentWeight: 1.0,
-  cohesionWeight: 1.0,
-  separationWeight: 1.5,
-  fieldOfView: 270,
-  boundaryMargin: 100,
-  boundaryForce: 0.8,
-  simulationSpeed: 1.0,
-  paused: false
-};
+/**
+ * Default configurations are now loaded from /config.json at startup.
+ * Import from '../config/ConfigLoader' to access loaded configuration.
+ * 
+ * @see src/config/ConfigLoader.ts
+ * @see public/config.json
+ */
 
-/** Default environment configuration */
-export const DEFAULT_ENVIRONMENT_CONFIG: IEnvironmentConfig = {
-  windSpeed: 0,
-  windDirection: 0,
-  windTurbulence: 0.3,
-  predatorEnabled: false,
-  predatorSpeed: 18,
-  predatorAggression: 0.5,
-  panicRadius: 150,
-  panicDecay: 0.95
-};
-
-/** Default rendering configuration */
-export const DEFAULT_RENDERING_CONFIG: IRenderingConfig = {
-  showTrails: false,
-  trailLength: 5,
-  showWindParticles: true,
-  showPredatorRange: true,
-  colorByDensity: true
-};
+// Re-export config loader functions for convenience
+export { loadConfig, getConfig, setConfig, getFallbackConfig } from '../config/ConfigLoader';
+export type { ILoadedConfig } from '../config/ConfigLoader';
 
