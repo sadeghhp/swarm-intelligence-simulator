@@ -1,0 +1,399 @@
+/**
+ * Main Application - Orchestrates the entire simulation
+ * Version: 1.0.0
+ * 
+ * This is the central hub that:
+ * - Initializes PixiJS renderer
+ * - Creates and manages all subsystems
+ * - Handles the main game loop
+ * - Coordinates user input
+ */
+
+import * as PIXI from 'pixi.js';
+import { Flock } from './simulation/Flock';
+import { FlockRenderer } from './rendering/FlockRenderer';
+import { EnvironmentRenderer } from './rendering/EnvironmentRenderer';
+import { TrailEffect } from './rendering/TrailEffect';
+import { ControlPanel } from './ui/ControlPanel';
+import { Statistics } from './ui/Statistics';
+import { Predator } from './environment/Predator';
+import { Vector2 } from './utils/Vector2';
+import {
+  DEFAULT_SIMULATION_CONFIG,
+  DEFAULT_ENVIRONMENT_CONFIG,
+  DEFAULT_RENDERING_CONFIG
+} from './types';
+import type { ISimulationConfig, IEnvironmentConfig, IRenderingConfig } from './types';
+
+export class App {
+  /** PixiJS Application */
+  private app!: PIXI.Application;
+  
+  /** Simulation container canvas */
+  private canvas: HTMLCanvasElement;
+  
+  /** Flock simulation */
+  private flock!: Flock;
+  
+  /** Flock renderer */
+  private flockRenderer!: FlockRenderer;
+  
+  /** Environment renderer */
+  private envRenderer!: EnvironmentRenderer;
+  
+  /** Trail effect */
+  private trailEffect!: TrailEffect;
+  
+  /** Control panel UI */
+  private controlPanel!: ControlPanel;
+  
+  /** Statistics display */
+  private statistics!: Statistics;
+  
+  /** Predator AI */
+  private predator!: Predator;
+  
+  /** Configuration */
+  private simConfig: ISimulationConfig;
+  private envConfig: IEnvironmentConfig;
+  private renderConfig: IRenderingConfig;
+  
+  /** Simulation dimensions */
+  private width: number = 0;
+  private height: number = 0;
+  
+  /** Last frame timestamp */
+  private lastTime: number = 0;
+  
+  /** Is running */
+  private running: boolean = false;
+
+  constructor() {
+    // Get canvas element
+    this.canvas = document.getElementById('simulation-canvas') as HTMLCanvasElement;
+    
+    // Initialize configs with defaults
+    this.simConfig = { ...DEFAULT_SIMULATION_CONFIG };
+    this.envConfig = { ...DEFAULT_ENVIRONMENT_CONFIG };
+    this.renderConfig = { ...DEFAULT_RENDERING_CONFIG };
+  }
+
+  /**
+   * Initialize the application
+   */
+  async initialize(): Promise<void> {
+    // Calculate dimensions (66% of viewport width)
+    this.updateDimensions();
+    
+    // Initialize PixiJS
+    this.app = new PIXI.Application();
+    await this.app.init({
+      canvas: this.canvas,
+      width: this.width,
+      height: this.height,
+      backgroundColor: 0x0a0a0f,
+      antialias: true,
+      resolution: window.devicePixelRatio || 1,
+      autoDensity: true
+    });
+    
+    // Initialize simulation
+    this.flock = new Flock(
+      this.width,
+      this.height,
+      this.simConfig,
+      this.envConfig
+    );
+    
+    // Initialize predator
+    this.predator = new Predator(this.width, this.height);
+    
+    // Initialize renderers
+    this.flockRenderer = new FlockRenderer(this.renderConfig);
+    this.envRenderer = new EnvironmentRenderer(this.width, this.height, this.renderConfig);
+    this.trailEffect = new TrailEffect();
+    
+    // Add renderers to stage (order matters for layering)
+    this.app.stage.addChild(this.trailEffect.getContainer());
+    this.app.stage.addChild(this.envRenderer.getContainer());
+    this.app.stage.addChild(this.flockRenderer.getContainer());
+    
+    // Initialize UI
+    this.initializeUI();
+    
+    // Initialize statistics
+    this.statistics = new Statistics();
+    
+    // Setup event listeners
+    this.setupEventListeners();
+    
+    // Initial sync
+    this.flockRenderer.syncBirdCount(this.simConfig.birdCount);
+  }
+
+  /**
+   * Initialize control panel UI
+   */
+  private initializeUI(): void {
+    const controlsWrapper = document.getElementById('controls-wrapper');
+    if (!controlsWrapper) {
+      throw new Error('Controls wrapper element not found');
+    }
+    
+    this.controlPanel = new ControlPanel(
+      controlsWrapper,
+      this.simConfig,
+      this.envConfig,
+      this.renderConfig,
+      {
+        onBirdCountChange: (count) => {
+          this.flock.setBirdCount(count);
+          this.flockRenderer.syncBirdCount(count);
+        },
+        onPerceptionRadiusChange: (radius) => {
+          this.flock.setPerceptionRadius(radius);
+        },
+        onPause: () => {
+          this.simConfig.paused = true;
+        },
+        onResume: () => {
+          this.simConfig.paused = false;
+        },
+        onReset: () => {
+          this.resetSimulation();
+        },
+        onPredatorToggle: (enabled) => {
+          if (enabled) {
+            this.predator.reset();
+          }
+        },
+        onTrailsToggle: (enabled) => {
+          this.trailEffect.setEnabled(enabled);
+          this.flockRenderer.setTrailsEnabled(false); // Use dedicated trail effect
+        }
+      }
+    );
+  }
+
+  /**
+   * Setup event listeners
+   */
+  private setupEventListeners(): void {
+    // Resize handler
+    window.addEventListener('resize', () => {
+      this.handleResize();
+    });
+    
+    // Click handler for attractors
+    this.canvas.addEventListener('click', (event) => {
+      this.handleClick(event);
+    });
+    
+    // Right-click handler for repulsors
+    this.canvas.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.handleRightClick(event);
+    });
+  }
+
+  /**
+   * Handle window resize
+   */
+  private handleResize(): void {
+    this.updateDimensions();
+    
+    this.app.renderer.resize(this.width, this.height);
+    this.flock.resize(this.width, this.height);
+    this.envRenderer.resize(this.width, this.height);
+    this.predator.resize(this.width, this.height);
+  }
+
+  /**
+   * Update dimensions based on viewport
+   */
+  private updateDimensions(): void {
+    const container = document.getElementById('simulation-container');
+    if (container) {
+      this.width = container.clientWidth;
+      this.height = container.clientHeight;
+    } else {
+      this.width = window.innerWidth * 0.66;
+      this.height = window.innerHeight;
+    }
+  }
+
+  /**
+   * Handle left click - add attractor
+   */
+  private handleClick(event: MouseEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    this.flock.addAttractor(x, y, 1.0, 150, 8, false);
+  }
+
+  /**
+   * Handle right click - add repulsor
+   */
+  private handleRightClick(event: MouseEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    this.flock.addAttractor(x, y, 1.5, 150, 8, true);
+  }
+
+  /**
+   * Start the simulation
+   */
+  start(): void {
+    this.running = true;
+    this.lastTime = performance.now();
+    this.gameLoop();
+  }
+
+  /**
+   * Stop the simulation
+   */
+  stop(): void {
+    this.running = false;
+  }
+
+  /**
+   * Main game loop
+   */
+  private gameLoop(): void {
+    if (!this.running) return;
+    
+    const now = performance.now();
+    const deltaTime = Math.min((now - this.lastTime) / 1000, 0.1);
+    this.lastTime = now;
+    
+    // Sync configs from control panel
+    this.syncConfigs();
+    
+    // Update simulation
+    this.update(deltaTime);
+    
+    // Render
+    this.render();
+    
+    // Update statistics
+    this.updateStatistics();
+    
+    // Request next frame
+    requestAnimationFrame(() => this.gameLoop());
+  }
+
+  /**
+   * Sync configurations from control panel
+   */
+  private syncConfigs(): void {
+    // Copy control panel configs to flock
+    Object.assign(this.flock.config, this.controlPanel.simConfig);
+    Object.assign(this.flock.envConfig, this.controlPanel.envConfig);
+    
+    // Update local refs
+    this.simConfig = this.controlPanel.simConfig;
+    this.envConfig = this.controlPanel.envConfig;
+    this.renderConfig = this.controlPanel.renderConfig;
+    
+    // Update rendering options
+    this.flockRenderer.setColorByDensity(this.renderConfig.colorByDensity);
+    this.flockRenderer.setTrailLength(this.renderConfig.trailLength);
+    this.trailEffect.setMaxLength(this.renderConfig.trailLength);
+    this.envRenderer.setWindParticlesEnabled(this.renderConfig.showWindParticles);
+    this.envRenderer.setPredatorRangeEnabled(this.renderConfig.showPredatorRange);
+  }
+
+  /**
+   * Update simulation
+   */
+  private update(deltaTime: number): void {
+    // Update predator
+    if (this.envConfig.predatorEnabled) {
+      const flockCenter = this.calculateFlockCenter();
+      this.predator.update(deltaTime, this.envConfig, this.flock.birds, flockCenter);
+      this.flock.setPredatorPosition(this.predator.position);
+    } else {
+      this.flock.setPredatorPosition(null);
+    }
+    
+    // Update flock
+    this.flock.update(deltaTime);
+    
+    // Update trail effect
+    if (this.renderConfig.showTrails) {
+      this.trailEffect.update(this.flock.birds, deltaTime);
+    }
+  }
+
+  /**
+   * Calculate center of flock
+   */
+  private calculateFlockCenter(): Vector2 {
+    const center = new Vector2();
+    
+    if (this.flock.birds.length === 0) {
+      return center.set(this.width / 2, this.height / 2);
+    }
+    
+    for (const bird of this.flock.birds) {
+      center.x += bird.position.x;
+      center.y += bird.position.y;
+    }
+    
+    center.div(this.flock.birds.length);
+    return center;
+  }
+
+  /**
+   * Render frame
+   */
+  private render(): void {
+    // Update flock renderer
+    this.flockRenderer.update(this.flock.birds);
+    
+    // Update environment renderer
+    this.envRenderer.update(
+      1 / 60, // Use fixed delta for smoother visuals
+      this.envConfig,
+      this.envConfig.predatorEnabled ? this.predator.position : null,
+      this.flock.getAttractors()
+    );
+  }
+
+  /**
+   * Update statistics display
+   */
+  private updateStatistics(): void {
+    const stats = this.flock.getStats();
+    stats.predatorState = this.predator.state;
+    this.statistics.update(stats);
+    this.flock.setFPS(this.statistics.getFps());
+  }
+
+  /**
+   * Reset the simulation
+   */
+  private resetSimulation(): void {
+    this.flock.reset();
+    this.predator.reset();
+    this.trailEffect.clear();
+    this.flockRenderer.syncBirdCount(this.simConfig.birdCount);
+  }
+
+  /**
+   * Destroy and clean up
+   */
+  destroy(): void {
+    this.running = false;
+    this.controlPanel.dispose();
+    this.flockRenderer.destroy();
+    this.envRenderer.destroy();
+    this.trailEffect.destroy();
+    this.app.destroy(true);
+  }
+}
+

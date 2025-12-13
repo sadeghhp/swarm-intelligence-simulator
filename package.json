@@ -1,0 +1,20 @@
+{
+  "name": "starling-swarm-simulator",
+  "version": "1.0.0",
+  "description": "Real-time starling murmuration simulator with swarm intelligence",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6",
+    "tweakpane": "^4.0.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}
+
