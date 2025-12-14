@@ -1,6 +1,6 @@
 /**
  * Swarm Rules Engine - Core flocking behavior
- * Version: 1.1.0 - Performance optimized (zero allocations in hot loop)
+ * Version: 1.2.0 - Added predator-prey hunting/fleeing dynamics
  * 
  * Implements the three fundamental rules of flocking behavior
  * (Reynolds' Boids model) plus refinements for realistic starling murmurations:
@@ -47,6 +47,8 @@ const tempDiff = new Vector2();
 const tempForce = new Vector2();
 const tempPanic = new Vector2();
 const tempAttractor = new Vector2();
+const tempHunt = new Vector2();
+const tempFlee = new Vector2();
 
 export class SwarmRules {
   /** Noise time offset for natural variation */
@@ -354,6 +356,166 @@ export class SwarmRules {
    */
   update(deltaTime: number): void {
     this.noiseTime += deltaTime;
+  }
+
+  /**
+   * Calculate hunting force - predator chases prey
+   * PERFORMANCE: Uses output parameter, zero allocations
+   * 
+   * @param hunter - The hunting bird
+   * @param prey - Array of potential prey birds
+   * @param huntingSpeed - Speed boost when hunting
+   * @param huntingRadius - Maximum hunting detection range
+   * @param maxForce - Maximum steering force
+   * @param outForce - Output vector for the force
+   */
+  calculateHuntingForce(
+    hunter: Bird,
+    prey: Bird[],
+    huntingSpeed: number,
+    huntingRadius: number,
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
+    
+    if (prey.length === 0) return;
+    
+    // Find nearest prey within radius
+    let nearestPrey: Bird | null = null;
+    let nearestDistSq = huntingRadius * huntingRadius;
+    
+    for (let i = 0; i < prey.length; i++) {
+      const p = prey[i];
+      const dx = p.position.x - hunter.position.x;
+      const dy = p.position.y - hunter.position.y;
+      const distSq = dx * dx + dy * dy;
+      
+      if (distSq < nearestDistSq && distSq > 0) {
+        nearestDistSq = distSq;
+        nearestPrey = p;
+      }
+    }
+    
+    if (nearestPrey) {
+      const dist = Math.sqrt(nearestDistSq);
+      
+      // Steering toward prey
+      tempHunt.x = nearestPrey.position.x - hunter.position.x;
+      tempHunt.y = nearestPrey.position.y - hunter.position.y;
+      tempHunt.normalize();
+      tempHunt.mult(huntingSpeed);
+      tempHunt.sub(hunter.velocity);
+      tempHunt.limit(maxForce * 1.5); // Hunting has stronger force
+      
+      // Urgency increases when closer
+      const urgency = 1 - (dist / huntingRadius);
+      
+      outForce.x = tempHunt.x * (1 + urgency);
+      outForce.y = tempHunt.y * (1 + urgency);
+    }
+  }
+
+  /**
+   * Calculate fleeing force - prey escapes from predators
+   * PERFORMANCE: Uses output parameter, zero allocations
+   * 
+   * @param prey - The fleeing bird
+   * @param predators - Array of predator birds
+   * @param fleeRadius - Range at which prey detects predators
+   * @param maxForce - Maximum steering force
+   * @param outForce - Output vector for the force
+   */
+  calculateFleeingForce(
+    prey: Bird,
+    predators: Bird[],
+    fleeRadius: number,
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
+    
+    if (predators.length === 0) return;
+    
+    let count = 0;
+    const fleeRadiusSq = fleeRadius * fleeRadius;
+    
+    for (let i = 0; i < predators.length; i++) {
+      const predator = predators[i];
+      const dx = prey.position.x - predator.position.x;
+      const dy = prey.position.y - predator.position.y;
+      const distSq = dx * dx + dy * dy;
+      
+      if (distSq < fleeRadiusSq && distSq > 0) {
+        const dist = Math.sqrt(distSq);
+        
+        // Vector pointing away from predator
+        // Strength inversely proportional to distance (closer = stronger)
+        const strength = (1 - dist / fleeRadius);
+        
+        tempFlee.x = (dx / dist) * strength;
+        tempFlee.y = (dy / dist) * strength;
+        
+        outForce.x += tempFlee.x;
+        outForce.y += tempFlee.y;
+        count++;
+        
+        // Apply panic to prey
+        prey.applyPanic(strength);
+      }
+    }
+    
+    if (count > 0) {
+      outForce.x /= count;
+      outForce.y /= count;
+      
+      // Normalize and scale
+      const mag = Math.sqrt(outForce.x * outForce.x + outForce.y * outForce.y);
+      if (mag > 0) {
+        outForce.x = (outForce.x / mag) * maxForce * 2; // Fleeing has high priority
+        outForce.y = (outForce.y / mag) * maxForce * 2;
+      }
+    }
+  }
+
+  /**
+   * Calculate territory return force - pull toward home territory
+   * PERFORMANCE: Uses output parameter, zero allocations
+   * 
+   * @param bird - The bird
+   * @param territoryX - Territory center X
+   * @param territoryY - Territory center Y
+   * @param territoryRadius - How far before pull activates
+   * @param strength - Force strength
+   * @param maxForce - Maximum force
+   * @param outForce - Output vector
+   */
+  calculateTerritoryForce(
+    bird: Bird,
+    territoryX: number,
+    territoryY: number,
+    territoryRadius: number,
+    strength: number,
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
+    
+    const dx = territoryX - bird.position.x;
+    const dy = territoryY - bird.position.y;
+    const distSq = dx * dx + dy * dy;
+    const radiusSq = territoryRadius * territoryRadius;
+    
+    // Only apply force if outside territory
+    if (distSq > radiusSq) {
+      const dist = Math.sqrt(distSq);
+      
+      // Force increases with distance from territory
+      const factor = Math.min(1, (dist - territoryRadius) / territoryRadius) * strength;
+      
+      outForce.x = (dx / dist) * factor * maxForce;
+      outForce.y = (dy / dist) * factor * maxForce;
+    }
   }
 }
 

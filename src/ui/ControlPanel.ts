@@ -1,6 +1,6 @@
 /**
  * Control Panel - Tweakpane integration for real-time parameter adjustment
- * Version: 1.3.0 - Added custom preset save/load from localStorage
+ * Version: 1.5.0 - Added ecosystem, day/night, and territory controls
  * 
  * Provides organized controls for all simulation parameters:
  * - Creature presets (starlings, insects, fish, bats, fireflies)
@@ -33,6 +33,9 @@ export interface ControlPanelCallbacks {
   onPresetChange: (preset: CreaturePreset) => void;
   onFoodToggle: (enabled: boolean) => void;
   onColorChange: () => void;
+  onDayNightToggle?: (enabled: boolean) => void;
+  onTerritoryToggle?: (enabled: boolean) => void;
+  onEcosystemToggle?: (enabled: boolean) => void;
 }
 
 export class ControlPanel {
@@ -55,6 +58,30 @@ export class ControlPanel {
     selectedPreset: '',
     newPresetName: '',
     newPresetDesc: ''
+  };
+  
+  /** Day/night cycle state */
+  private dayNightState = {
+    enabled: false,
+    cycleDuration: 120,
+    timeOfDay: 0.25,
+    paused: false
+  };
+  
+  /** Territory state */
+  private territoryState = {
+    enabled: false,
+    showTerritories: true,
+    defaultRadius: 200,
+    defaultStrength: 0.5
+  };
+  
+  /** Ecosystem state */
+  private ecosystemState = {
+    enabled: false,
+    interactionRadius: 150,
+    huntingForce: 0.8,
+    fleeingForce: 1.5
   };
   
   /** Custom presets folder reference for refresh */
@@ -88,7 +115,11 @@ export class ControlPanel {
     this.setupSimulationControls();
     this.setupSwarmRules();
     this.setupEnvironment();
+    this.setupEnergy();
     this.setupFood();
+    this.setupEcosystem();
+    this.setupDayNight();
+    this.setupTerritory();
     this.setupVisuals();
     this.setupRendering();
   }
@@ -111,6 +142,11 @@ export class ControlPanel {
         'Fish School': 'fish',
         'Bats': 'bats',
         'Fireflies': 'fireflies',
+        'Ants': 'ants',
+        'Locusts': 'locusts',
+        'Jellyfish': 'jellyfish',
+        'Sparrows': 'sparrows',
+        'Plankton': 'plankton',
         'Custom': 'custom'
       }
     }).on('change', (ev) => {
@@ -646,6 +682,41 @@ export class ControlPanel {
   }
 
   /**
+   * Setup energy system folder
+   */
+  private setupEnergy(): void {
+    const folder = this.pane.addFolder({
+      title: 'Energy System',
+      expanded: false
+    });
+    
+    folder.addBinding(this.simConfig, 'energyEnabled', {
+      label: 'Active'
+    });
+    
+    folder.addBinding(this.simConfig, 'energyDecayRate', {
+      label: 'Decay Rate',
+      min: 0.001,
+      max: 0.1,
+      step: 0.005
+    });
+    
+    folder.addBinding(this.simConfig, 'minEnergySpeed', {
+      label: 'Min Speed %',
+      min: 0.1,
+      max: 0.8,
+      step: 0.05
+    });
+    
+    folder.addBinding(this.simConfig, 'foodEnergyRestore', {
+      label: 'Food Restore',
+      min: 0.05,
+      max: 0.5,
+      step: 0.05
+    });
+  }
+
+  /**
    * Setup food/hunting folder
    */
   private setupFood(): void {
@@ -710,6 +781,142 @@ export class ControlPanel {
       min: 30,
       max: 200,
       step: 10
+    });
+  }
+
+  /**
+   * Setup ecosystem/multi-species folder
+   */
+  private setupEcosystem(): void {
+    const folder = this.pane.addFolder({
+      title: 'Multi-Species Ecosystem',
+      expanded: false
+    });
+    
+    folder.addBinding(this.ecosystemState, 'enabled', {
+      label: 'Active'
+    }).on('change', (ev) => {
+      this.callbacks.onEcosystemToggle?.(ev.value);
+    });
+    
+    folder.addBinding(this.ecosystemState, 'interactionRadius', {
+      label: 'Interaction Range',
+      min: 50,
+      max: 300,
+      step: 10
+    });
+    
+    folder.addBinding(this.ecosystemState, 'huntingForce', {
+      label: 'Hunting Force',
+      min: 0.1,
+      max: 2.0,
+      step: 0.1
+    });
+    
+    folder.addBinding(this.ecosystemState, 'fleeingForce', {
+      label: 'Fleeing Force',
+      min: 0.5,
+      max: 3.0,
+      step: 0.1
+    });
+    
+    // Info text
+    folder.addBlade({
+      view: 'text',
+      label: 'Info',
+      parse: (v: string) => v,
+      value: 'Enables predator-prey interactions between species'
+    });
+  }
+
+  /**
+   * Setup day/night cycle folder
+   */
+  private setupDayNight(): void {
+    const folder = this.pane.addFolder({
+      title: 'Day/Night Cycle',
+      expanded: false
+    });
+    
+    folder.addBinding(this.dayNightState, 'enabled', {
+      label: 'Active'
+    }).on('change', (ev) => {
+      this.callbacks.onDayNightToggle?.(ev.value);
+    });
+    
+    folder.addBinding(this.dayNightState, 'cycleDuration', {
+      label: 'Cycle (seconds)',
+      min: 30,
+      max: 600,
+      step: 10
+    });
+    
+    folder.addBinding(this.dayNightState, 'timeOfDay', {
+      label: 'Time of Day',
+      min: 0,
+      max: 1,
+      step: 0.01
+    });
+    
+    folder.addBinding(this.dayNightState, 'paused', {
+      label: 'Freeze Time'
+    });
+    
+    // Time presets
+    folder.addButton({
+      title: '☀️ Skip to Day'
+    }).on('click', () => {
+      this.dayNightState.timeOfDay = 0.5;
+      this.pane.refresh();
+    });
+    
+    folder.addButton({
+      title: '🌙 Skip to Night'
+    }).on('click', () => {
+      this.dayNightState.timeOfDay = 0;
+      this.pane.refresh();
+    });
+  }
+
+  /**
+   * Setup territory folder
+   */
+  private setupTerritory(): void {
+    const folder = this.pane.addFolder({
+      title: 'Territories',
+      expanded: false
+    });
+    
+    folder.addBinding(this.territoryState, 'enabled', {
+      label: 'Active'
+    }).on('change', (ev) => {
+      this.callbacks.onTerritoryToggle?.(ev.value);
+    });
+    
+    folder.addBinding(this.territoryState, 'showTerritories', {
+      label: 'Show Zones'
+    });
+    
+    folder.addBinding(this.territoryState, 'defaultRadius', {
+      label: 'Default Radius',
+      min: 100,
+      max: 500,
+      step: 25
+    });
+    
+    folder.addBinding(this.territoryState, 'defaultStrength', {
+      label: 'Pull Strength',
+      min: 0.1,
+      max: 1.0,
+      step: 0.1
+    });
+    
+    // Info text
+    folder.addBlade({
+      view: 'text',
+      label: 'Info',
+      parse: (v: string) => v,
+      value: 'Creatures stay near their territory zones'
     });
   }
 

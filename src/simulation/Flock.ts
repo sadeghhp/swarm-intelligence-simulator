@@ -1,6 +1,6 @@
 /**
  * Flock Manager - Orchestrates the swarm simulation
- * Version: 1.0.0
+ * Version: 1.1.0 - Added energy system integration
  * 
  * Responsibilities:
  * - Manages all bird instances
@@ -30,12 +30,14 @@ import type {
   ISimulationStats,
   IAttractor
 } from '../types';
+import { FoodSourceManager } from '../environment/FoodSource';
 
 // Pre-allocated vectors for simulation loop (avoid GC pressure)
 const tempSwarmForce = new Vector2();
 const tempPanicForce = new Vector2();
 const tempAttractorForce = new Vector2();
 const tempWindForce = new Vector2();
+const tempFoodForce = new Vector2();
 
 export class Flock {
   /** All birds in the flock */
@@ -71,14 +73,20 @@ export class Flock {
   /** Predator state */
   private predatorPosition: Vector2 | null = null;
   
+  /** Food source manager reference (optional, set externally) */
+  private foodManager: FoodSourceManager | null = null;
+  
   /** Statistics */
   private stats: ISimulationStats = {
     fps: 60,
     birdCount: 0,
     averageDensity: 0,
     averageVelocity: 0,
+    averageEnergy: 1.0,
     simulationTime: 0,
-    predatorState: 'idle'
+    predatorState: 'idle',
+    foodConsumed: 0,
+    activeFood: 0
   };
 
   constructor(
@@ -265,8 +273,42 @@ export class Flock {
         this.config.boundaryForce
       );
       
-      // Update bird physics
-      bird.update(dt, this.config);
+      // Energy-based food seeking (hungry creatures seek food more)
+      if (this.config.energyEnabled && this.foodManager && this.envConfig.foodEnabled) {
+        // Low energy creatures are more attracted to food
+        const energyUrgency = 1 - bird.energy; // 0 when full, 1 when empty
+        if (energyUrgency > 0.3) {
+          const foodStrength = this.envConfig.foodAttractionStrength * (1 + energyUrgency * 2);
+          const hasFood = this.foodManager.getAttractionForce(
+            bird.position,
+            foodStrength,
+            this.envConfig.foodAttractionRadius,
+            tempFoodForce
+          );
+          if (hasFood) {
+            bird.applyForce(tempFoodForce);
+          }
+        }
+        
+        // Check for food consumption and restore energy
+        const energyRestored = this.foodManager.consume(
+          bird.position,
+          1,
+          this.config.foodEnergyRestore
+        );
+        if (energyRestored > 0) {
+          bird.restoreEnergy(energyRestored);
+        }
+      }
+      
+      // Update bird physics (with energy parameters)
+      bird.update(
+        dt,
+        this.config,
+        this.config.energyEnabled,
+        this.config.energyDecayRate,
+        this.config.minEnergySpeed
+      );
     }
   }
 
@@ -367,10 +409,12 @@ export class Flock {
   private updateStats(): void {
     let totalVelocity = 0;
     let totalDensity = 0;
+    let totalEnergy = 0;
     
     for (const bird of this.birds) {
       totalVelocity += bird.speed;
       totalDensity += bird.localDensity;
+      totalEnergy += bird.energy;
     }
     
     this.stats.birdCount = this.birds.length;
@@ -380,7 +424,16 @@ export class Flock {
     this.stats.averageDensity = this.birds.length > 0
       ? totalDensity / this.birds.length
       : 0;
+    this.stats.averageEnergy = this.birds.length > 0
+      ? totalEnergy / this.birds.length
+      : 1.0;
     this.stats.simulationTime = this.simulationTime;
+    
+    // Update food stats if manager is set
+    if (this.foodManager) {
+      this.stats.foodConsumed = this.foodManager.totalConsumed;
+      this.stats.activeFood = this.foodManager.getActiveCount();
+    }
   }
 
   /**
@@ -438,6 +491,20 @@ export class Flock {
    */
   getSimulationTime(): number {
     return this.simulationTime;
+  }
+  
+  /**
+   * Set food source manager for energy integration
+   */
+  setFoodManager(manager: FoodSourceManager): void {
+    this.foodManager = manager;
+  }
+  
+  /**
+   * Get all birds (for external access)
+   */
+  getBirds(): Bird[] {
+    return this.birds;
   }
 }
 

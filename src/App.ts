@@ -1,6 +1,6 @@
 /**
  * Main Application - Orchestrates the entire simulation
- * Version: 1.2.0 - Extended with creature presets, food, and visual customization
+ * Version: 1.3.0 - Added energy system integration
  * 
  * This is the central hub that:
  * - Initializes PixiJS renderer
@@ -121,6 +121,9 @@ export class App {
     
     // Initialize food manager
     this.foodManager = new FoodSourceManager(this.width, this.height);
+    
+    // Connect food manager to flock for energy system
+    this.flock.setFoodManager(this.foodManager);
     
     // Initialize renderers
     this.flockRenderer = new FlockRenderer(this.renderConfig);

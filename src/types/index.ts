@@ -1,6 +1,6 @@
 /**
  * Core TypeScript interfaces for the Starling Swarm Simulator
- * Version: 1.2.0 - Extended with creature presets and food mechanics
+ * Version: 1.4.0 - Added ecosystem and multi-species support
  */
 
 /** 2D Vector representation */
@@ -19,7 +19,7 @@ export interface IBirdState {
 }
 
 /** Creature preset types */
-export type CreaturePreset = 'starlings' | 'insects' | 'fish' | 'bats' | 'fireflies' | 'custom';
+export type CreaturePreset = 'starlings' | 'insects' | 'fish' | 'bats' | 'fireflies' | 'ants' | 'locusts' | 'jellyfish' | 'sparrows' | 'plankton' | 'custom';
 
 /** Creature preset configuration */
 export interface ICreaturePreset {
@@ -72,6 +72,12 @@ export interface ISimulationConfig {
   // Noise/randomness
   noiseStrength: number;
   wanderStrength: number;
+  
+  // Energy system
+  energyEnabled: boolean;
+  energyDecayRate: number;
+  minEnergySpeed: number;
+  foodEnergyRestore: number;
 }
 
 /** Environment configuration */
@@ -118,6 +124,7 @@ export interface ISimulationStats {
   birdCount: number;
   averageDensity: number;
   averageVelocity: number;
+  averageEnergy: number;
   simulationTime: number;
   predatorState: 'idle' | 'hunting' | 'attacking';
   foodConsumed: number;
@@ -147,6 +154,26 @@ export interface IAttractor {
 /** Spatial grid cell */
 export interface IGridCell {
   birds: number[];
+}
+
+/** Species definition for ecosystem */
+export interface ISpecies {
+  id: string;
+  preset: CreaturePreset;
+  count: number;
+  preyOn: string[];       // Species IDs this one hunts
+  avoidSpecies: string[]; // Species IDs to flee from
+  active: boolean;
+}
+
+/** Ecosystem configuration */
+export interface IEcosystemConfig {
+  enabled: boolean;
+  species: ISpecies[];
+  interactionRadius: number;
+  huntingForce: number;
+  fleeingForce: number;
+  respawnDelay: number;
 }
 
 /** Neighbor query result */

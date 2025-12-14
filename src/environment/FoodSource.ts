@@ -1,6 +1,6 @@
 /**
  * Food Source Manager - Food/resource mechanics for the simulation
- * Version: 1.0.0
+ * Version: 1.1.0 - Added energy restoration for creatures
  * 
  * Food sources attract creatures, creating natural gathering points.
  * Features:
@@ -107,8 +107,9 @@ export class FoodSourceManager {
 
   /**
    * Consume food at a position (called when creature reaches food)
+   * @returns Energy restored (0 if no food consumed)
    */
-  consume(position: Vector2, amount: number = 1): boolean {
+  consume(position: Vector2, amount: number = 1, energyRestoreAmount: number = 0.1): number {
     for (const source of this.sources.values()) {
       if (source.consumed) continue;
       
@@ -125,11 +126,35 @@ export class FoodSourceManager {
           source.respawnTimer = 10; // Will be overridden by config
         }
         
-        return true;
+        return energyRestoreAmount;
       }
     }
     
-    return false;
+    return 0;
+  }
+  
+  /**
+   * Check if a position is near food (for energy-seeking behavior)
+   * @returns Distance to nearest food, or -1 if none within radius
+   */
+  getNearestFoodDistance(position: Vector2, radius: number): number {
+    let closestDistSq = radius * radius;
+    let found = false;
+    
+    for (const source of this.sources.values()) {
+      if (source.consumed) continue;
+      
+      const dx = source.position.x - position.x;
+      const dy = source.position.y - position.y;
+      const distSq = dx * dx + dy * dy;
+      
+      if (distSq < closestDistSq) {
+        closestDistSq = distSq;
+        found = true;
+      }
+    }
+    
+    return found ? Math.sqrt(closestDistSq) : -1;
   }
 
   /**

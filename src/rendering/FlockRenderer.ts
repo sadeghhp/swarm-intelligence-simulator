@@ -1,6 +1,6 @@
 /**
  * Flock Renderer - High-performance PixiJS rendering for creatures
- * Version: 1.2.0 - Extended with particle shapes, glow, and color modes
+ * Version: 1.3.0 - Added multi-species color support
  * 
  * Uses PixiJS Container with optimized sprite batching
  * for rendering thousands of creatures at 60fps.
@@ -15,7 +15,7 @@
 
 import * as PIXI from 'pixi.js';
 import type { Bird } from '../simulation/Bird';
-import type { IRenderingConfig, ISimulationConfig } from '../types';
+import type { IRenderingConfig, ISimulationConfig, ICreaturePreset } from '../types';
 import { lerpColor, clamp } from '../utils/MathUtils';
 
 export class FlockRenderer {
@@ -56,6 +56,12 @@ export class FlockRenderer {
   
   /** Current particle size */
   private particleSize: number = 1.0;
+  
+  /** Species color map for multi-species rendering */
+  private speciesColors: Map<string, { base: number; dense: number; panic: number }> = new Map();
+  
+  /** Whether to color by species */
+  private colorBySpecies: boolean = false;
 
   constructor(config: IRenderingConfig) {
     this.config = config;
@@ -402,25 +408,70 @@ export class FlockRenderer {
    * Calculate bird color based on state
    */
   private calculateBirdColor(bird: Bird): number {
-    let color = this.baseColor;
+    // Get base colors - use species-specific colors if available
+    let baseColor = this.baseColor;
+    let denseColor = this.denseColor;
+    let panicColor = this.panicColor;
+    
+    if (this.colorBySpecies && bird.speciesId !== 'default') {
+      const speciesColor = this.speciesColors.get(bird.speciesId);
+      if (speciesColor) {
+        baseColor = speciesColor.base;
+        denseColor = speciesColor.dense;
+        panicColor = speciesColor.panic;
+      }
+    }
+    
+    let color = baseColor;
     
     // Color by speed
     if (this.config.colorBySpeed) {
       const speedFactor = clamp(bird.speed / 20, 0, 1);
-      color = lerpColor(this.baseColor, this.denseColor, speedFactor);
+      color = lerpColor(baseColor, denseColor, speedFactor);
     }
     // Color by density
     else if (this.config.colorByDensity) {
       const densityFactor = clamp(bird.localDensity / 15, 0, 1);
-      color = lerpColor(this.baseColor, this.denseColor, densityFactor);
+      color = lerpColor(baseColor, denseColor, densityFactor);
+    }
+    
+    // Low energy makes color dimmer
+    if (bird.energy < 0.5) {
+      const energyFactor = bird.energy / 0.5;
+      color = lerpColor(0x333333, color, energyFactor);
     }
     
     // Overlay panic color
     if (bird.panicLevel > 0.1) {
-      color = lerpColor(color, this.panicColor, bird.panicLevel * 0.8);
+      color = lerpColor(color, panicColor, bird.panicLevel * 0.8);
     }
     
     return color;
+  }
+  
+  /**
+   * Set species colors for multi-species rendering
+   */
+  setSpeciesColors(speciesId: string, preset: ICreaturePreset): void {
+    this.speciesColors.set(speciesId, {
+      base: preset.baseColor,
+      dense: preset.denseColor,
+      panic: preset.panicColor
+    });
+  }
+  
+  /**
+   * Enable/disable coloring by species
+   */
+  setColorBySpecies(enabled: boolean): void {
+    this.colorBySpecies = enabled;
+  }
+  
+  /**
+   * Clear species color cache
+   */
+  clearSpeciesColors(): void {
+    this.speciesColors.clear();
   }
 
   /**

@@ -1,6 +1,6 @@
 /**
  * Bird Entity - Core simulation unit for swarm behavior
- * Version: 1.1.0 - Performance optimized (zero allocations in hot path)
+ * Version: 1.2.0 - Added energy/stamina system
  * 
  * Each bird maintains its own physics state:
  * - Position: Current location in 2D space
@@ -39,6 +39,12 @@ export class Bird {
   /** Local density (number of neighbors) - updated during simulation */
   public localDensity: number = 0;
   
+  /** Energy level (0-1) - affects speed and behavior */
+  public energy: number = 1.0;
+  
+  /** Species identifier for multi-species ecosystem */
+  public speciesId: string = 'default';
+  
   /** Cached heading angle for rendering */
   private _heading: number = 0;
 
@@ -64,15 +70,34 @@ export class Bird {
    * 
    * @param deltaTime - Time since last frame (seconds)
    * @param config - Simulation configuration for constraints
+   * @param energyEnabled - Whether energy system is active
+   * @param energyDecayRate - Rate at which energy depletes per second
+   * @param minEnergySpeed - Minimum speed multiplier when energy is 0 (0.3 = 30%)
    */
-  update(deltaTime: number, config: ISimulationConfig): void {
+  update(
+    deltaTime: number,
+    config: ISimulationConfig,
+    energyEnabled: boolean = false,
+    energyDecayRate: number = 0.01,
+    minEnergySpeed: number = 0.3
+  ): void {
     // Apply acceleration to velocity
     const accelMult = deltaTime * 60;
     this.velocity.x += this.acceleration.x * accelMult;
     this.velocity.y += this.acceleration.y * accelMult;
     
-    // Limit to max speed (higher when panicked)
-    const effectiveMaxSpeed = config.maxSpeed * (1 + this.panicLevel * 0.5);
+    // Calculate effective max speed based on energy and panic
+    let effectiveMaxSpeed = config.maxSpeed;
+    
+    // Energy affects speed: low energy = slower movement
+    if (energyEnabled) {
+      const energyMultiplier = minEnergySpeed + (1 - minEnergySpeed) * this.energy;
+      effectiveMaxSpeed *= energyMultiplier;
+    }
+    
+    // Panic boosts speed
+    effectiveMaxSpeed *= (1 + this.panicLevel * 0.5);
+    
     this.velocity.limit(effectiveMaxSpeed);
     
     // Apply velocity to position
@@ -97,6 +122,24 @@ export class Bird {
         this.panicLevel = 0;
       }
     }
+    
+    // Decay energy (if enabled)
+    if (energyEnabled && this.energy > 0) {
+      // Higher speed = more energy consumption
+      const speedFactor = 1 + (this.speed / config.maxSpeed) * 0.5;
+      this.energy -= energyDecayRate * deltaTime * speedFactor;
+      if (this.energy < 0) {
+        this.energy = 0;
+      }
+    }
+  }
+  
+  /**
+   * Restore energy (e.g., from food)
+   * @param amount - Amount of energy to restore (0-1)
+   */
+  restoreEnergy(amount: number): void {
+    this.energy = Math.min(1.0, this.energy + amount);
   }
 
   /**
@@ -155,7 +198,7 @@ export class Bird {
    * Returns desired velocity minus current velocity
    */
   seek(target: Vector2, maxSpeed: number, maxForce: number): Vector2 {
-    const desired = Bird.tempVec.copy(target).sub(this.position);
+    const desired = tempVec.copy(target).sub(this.position);
     const d = desired.mag();
     
     if (d > 0) {
@@ -181,7 +224,7 @@ export class Bird {
    * Calculate steering force away from a target
    */
   flee(target: Vector2, maxSpeed: number, maxForce: number): Vector2 {
-    const desired = Bird.tempVec.copy(this.position).sub(target);
+    const desired = tempVec.copy(this.position).sub(target);
     const d = desired.mag();
     
     if (d > 0) {
@@ -211,6 +254,7 @@ export class Bird {
     this.acceleration.zero();
     this.panicLevel = 0;
     this.localDensity = 0;
+    this.energy = 1.0;
   }
 
   /**
