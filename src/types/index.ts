@@ -1,6 +1,6 @@
 /**
  * Core TypeScript interfaces for the Starling Swarm Simulator
- * Version: 1.4.0 - Added ecosystem and multi-species support
+ * Version: 1.6.0 - Added ocean predator types (shark, orca, barracuda, sea_lion)
  */
 
 /** 2D Vector representation */
@@ -19,7 +19,7 @@ export interface IBirdState {
 }
 
 /** Creature preset types */
-export type CreaturePreset = 'starlings' | 'insects' | 'fish' | 'bats' | 'fireflies' | 'ants' | 'locusts' | 'jellyfish' | 'sparrows' | 'plankton' | 'custom';
+export type CreaturePreset = 'starlings' | 'insects' | 'fish' | 'bats' | 'fireflies' | 'ants' | 'locusts' | 'jellyfish' | 'sparrows' | 'plankton' | 'herring' | 'custom';
 
 /** Creature preset configuration */
 export interface ICreaturePreset {
@@ -80,6 +80,12 @@ export interface ISimulationConfig {
   foodEnergyRestore: number;
 }
 
+/** Feeding behavior types */
+export type FeedingBehaviorType = 'gather' | 'swarm' | 'hover';
+
+/** Creature feeding states */
+export type FeedingState = 'none' | 'approaching' | 'gathering' | 'feeding';
+
 /** Environment configuration */
 export interface IEnvironmentConfig {
   // Wind
@@ -103,6 +109,13 @@ export interface IEnvironmentConfig {
   foodAttractionRadius: number;
   foodRespawnTime: number;
   
+  // Feeding behavior (creatures gathering at food)
+  feedingBehavior: FeedingBehaviorType;
+  gatherRadius: number;           // Distance at which creatures orbit food
+  feedingDuration: number;        // Minimum time (seconds) creatures stay at food
+  maxFeedersPerFood: number;      // Maximum creatures allowed at one food source
+  consumptionPerFeeder: number;   // Food amount consumed per second per creature
+  
   // Hunting behavior (creatures hunting each other)
   huntingEnabled: boolean;
   huntingSpeed: number;
@@ -118,6 +131,10 @@ export interface IFoodSource {
   radius: number;
   respawnTimer: number;
   consumed: boolean;
+  /** Set of bird IDs currently feeding at this source */
+  feeders: Set<number>;
+  /** Current consumption rate (based on number of feeders) */
+  consumptionRate: number;
 }
 
 /** Statistics for display */
@@ -137,7 +154,9 @@ export interface ISimulationStats {
 }
 
 /** Predator types - different hunting strategies */
-export type PredatorType = 'hawk' | 'falcon' | 'eagle' | 'owl';
+export type PredatorType = 
+  | 'hawk' | 'falcon' | 'eagle' | 'owl'           // Air predators
+  | 'shark' | 'orca' | 'barracuda' | 'sea_lion';  // Ocean predators
 
 /** Predator behavior states */
 export type PredatorBehaviorState = 

@@ -1,6 +1,6 @@
 /**
  * Swarm Rules Engine - Core flocking behavior
- * Version: 1.2.0 - Added predator-prey hunting/fleeing dynamics
+ * Version: 1.3.0 - Added food gathering and feeding behaviors
  * 
  * Implements the three fundamental rules of flocking behavior
  * (Reynolds' Boids model) plus refinements for realistic starling murmurations:
@@ -36,7 +36,7 @@
 import { Vector2 } from '../utils/Vector2';
 import { Bird } from './Bird';
 import { noise } from '../utils/MathUtils';
-import type { ISimulationConfig, IEnvironmentConfig } from '../types';
+import type { ISimulationConfig, IEnvironmentConfig, FeedingBehaviorType, IVector2 } from '../types';
 
 // Reusable vectors to avoid allocations in hot loop
 const tempAlignment = new Vector2();
@@ -49,6 +49,9 @@ const tempPanic = new Vector2();
 const tempAttractor = new Vector2();
 const tempHunt = new Vector2();
 const tempFlee = new Vector2();
+const tempGather = new Vector2();
+const tempFeed = new Vector2();
+const tempTangent = new Vector2();
 
 export class SwarmRules {
   /** Noise time offset for natural variation */
@@ -516,6 +519,233 @@ export class SwarmRules {
       outForce.x = (dx / dist) * factor * maxForce;
       outForce.y = (dy / dist) * factor * maxForce;
     }
+  }
+
+  /**
+   * GATHERING BEHAVIOR
+   * 
+   * Calculate force for gathering/orbiting around a food source.
+   * Creates circular motion around the food while maintaining distance.
+   * 
+   * Different behavior types:
+   * - 'gather': Circular orbiting motion (ant-like)
+   * - 'swarm': Chaotic movement around food
+   * - 'hover': Stationary hovering near food
+   * 
+   * PERFORMANCE: Uses output parameter, zero allocations
+   * 
+   * @param bird - The bird gathering at food
+   * @param foodPosition - Position of the food source
+   * @param gatherRadius - Ideal orbit distance from food
+   * @param behaviorType - Type of gathering behavior
+   * @param maxSpeed - Maximum speed while gathering (usually reduced)
+   * @param maxForce - Maximum steering force
+   * @param outForce - Output vector for the force
+   */
+  calculateGatheringForce(
+    bird: Bird,
+    foodPosition: IVector2,
+    gatherRadius: number,
+    behaviorType: FeedingBehaviorType,
+    maxSpeed: number,
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
+    
+    // Vector from bird to food
+    const dx = foodPosition.x - bird.position.x;
+    const dy = foodPosition.y - bird.position.y;
+    const distSq = dx * dx + dy * dy;
+    const dist = Math.sqrt(distSq);
+    
+    if (dist < 0.1) {
+      // Already at center, apply small random force
+      outForce.x = (Math.random() - 0.5) * maxForce * 0.5;
+      outForce.y = (Math.random() - 0.5) * maxForce * 0.5;
+      return;
+    }
+    
+    // Normalized direction to food
+    const toFoodX = dx / dist;
+    const toFoodY = dy / dist;
+    
+    switch (behaviorType) {
+      case 'gather': {
+        // Circular orbiting behavior (ant-like gathering)
+        // Calculate tangent vector for circular motion
+        tempTangent.x = -toFoodY;
+        tempTangent.y = toFoodX;
+        
+        // Orbit speed varies slightly based on bird ID for variation
+        const orbitSpeed = maxSpeed * 0.5 * (0.8 + (bird.id % 10) * 0.04);
+        
+        // Calculate radial force to maintain orbit distance
+        const distanceError = dist - gatherRadius;
+        const radialStrength = Math.min(1, Math.abs(distanceError) / gatherRadius);
+        
+        // Move toward orbit radius
+        tempGather.x = toFoodX * distanceError * radialStrength;
+        tempGather.y = toFoodY * distanceError * radialStrength;
+        
+        // Add tangential component for circular motion
+        tempGather.x += tempTangent.x * orbitSpeed;
+        tempGather.y += tempTangent.y * orbitSpeed;
+        
+        // Steering = desired - current
+        tempGather.sub(bird.velocity);
+        tempGather.limit(maxForce);
+        
+        outForce.x = tempGather.x;
+        outForce.y = tempGather.y;
+        break;
+      }
+      
+      case 'swarm': {
+        // Chaotic swarming behavior
+        // Move toward food with random perturbations
+        const swarmNoise = noise(bird.position.x * 0.02 + this.noiseTime, bird.position.y * 0.02);
+        const noiseAngle = swarmNoise * Math.PI * 2;
+        
+        tempGather.x = toFoodX * maxSpeed * 0.4;
+        tempGather.y = toFoodY * maxSpeed * 0.4;
+        
+        // Add noise for chaotic movement
+        tempGather.x += Math.cos(noiseAngle) * maxSpeed * 0.3;
+        tempGather.y += Math.sin(noiseAngle) * maxSpeed * 0.3;
+        
+        // Repel if too close to center
+        if (dist < gatherRadius * 0.3) {
+          tempGather.x -= toFoodX * maxSpeed * 0.5;
+          tempGather.y -= toFoodY * maxSpeed * 0.5;
+        }
+        
+        tempGather.sub(bird.velocity);
+        tempGather.limit(maxForce);
+        
+        outForce.x = tempGather.x;
+        outForce.y = tempGather.y;
+        break;
+      }
+      
+      case 'hover': {
+        // Hovering behavior - stay relatively still near food
+        // Seek a point at gatherRadius from food
+        const targetX = foodPosition.x + (bird.position.x - foodPosition.x) / dist * gatherRadius;
+        const targetY = foodPosition.y + (bird.position.y - foodPosition.y) / dist * gatherRadius;
+        
+        tempGather.x = targetX - bird.position.x;
+        tempGather.y = targetY - bird.position.y;
+        
+        // Very gentle force for hovering
+        tempGather.setMag(Math.min(tempGather.mag(), maxSpeed * 0.2));
+        tempGather.sub(bird.velocity);
+        tempGather.limit(maxForce * 0.5);
+        
+        // Add slight damping to reduce movement
+        outForce.x = tempGather.x - bird.velocity.x * 0.1;
+        outForce.y = tempGather.y - bird.velocity.y * 0.1;
+        break;
+      }
+    }
+  }
+
+  /**
+   * FEEDING BEHAVIOR
+   * 
+   * Calculate force for actively feeding at a food source.
+   * This slows the creature down and moves it toward the food center.
+   * 
+   * PERFORMANCE: Uses output parameter, zero allocations
+   * 
+   * @param bird - The bird feeding
+   * @param foodPosition - Position of the food source
+   * @param maxSpeed - Maximum speed (should be very low for feeding)
+   * @param maxForce - Maximum steering force
+   * @param outForce - Output vector for the force
+   */
+  calculateFeedingForce(
+    bird: Bird,
+    foodPosition: IVector2,
+    maxSpeed: number,
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
+    
+    // Vector from bird to food center
+    const dx = foodPosition.x - bird.position.x;
+    const dy = foodPosition.y - bird.position.y;
+    const distSq = dx * dx + dy * dy;
+    const dist = Math.sqrt(distSq);
+    
+    // If very close to food, just apply damping to stop
+    if (dist < 5) {
+      // Strong damping to stop movement
+      outForce.x = -bird.velocity.x * 0.3;
+      outForce.y = -bird.velocity.y * 0.3;
+      return;
+    }
+    
+    // Slowly move toward food center
+    tempFeed.x = dx;
+    tempFeed.y = dy;
+    tempFeed.normalize();
+    tempFeed.mult(maxSpeed * 0.3); // Very slow approach
+    
+    // Steering = desired - current
+    tempFeed.sub(bird.velocity);
+    tempFeed.limit(maxForce);
+    
+    // Add strong damping to slow down
+    outForce.x = tempFeed.x - bird.velocity.x * 0.2;
+    outForce.y = tempFeed.y - bird.velocity.y * 0.2;
+  }
+
+  /**
+   * Calculate approaching force - direct movement toward food
+   * PERFORMANCE: Uses output parameter, zero allocations
+   * 
+   * @param bird - The bird approaching food
+   * @param foodPosition - Position of the food source
+   * @param maxSpeed - Maximum approach speed
+   * @param maxForce - Maximum steering force
+   * @param outForce - Output vector for the force
+   */
+  calculateApproachingForce(
+    bird: Bird,
+    foodPosition: IVector2,
+    maxSpeed: number,
+    maxForce: number,
+    outForce: Vector2
+  ): void {
+    outForce.zero();
+    
+    // Vector from bird to food
+    const dx = foodPosition.x - bird.position.x;
+    const dy = foodPosition.y - bird.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < 1) {
+      return;
+    }
+    
+    // Desired velocity toward food
+    tempGather.x = dx / dist * maxSpeed;
+    tempGather.y = dy / dist * maxSpeed;
+    
+    // Arrival behavior - slow down as we approach
+    if (dist < 50) {
+      const speedFactor = dist / 50;
+      tempGather.mult(speedFactor);
+    }
+    
+    // Steering = desired - current
+    tempGather.sub(bird.velocity);
+    tempGather.limit(maxForce);
+    
+    outForce.x = tempGather.x;
+    outForce.y = tempGather.y;
   }
 }
 

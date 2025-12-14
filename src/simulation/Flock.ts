@@ -1,6 +1,6 @@
 /**
  * Flock Manager - Orchestrates the swarm simulation
- * Version: 1.1.0 - Added energy system integration
+ * Version: 1.2.0 - Added feeding behavior state machine
  * 
  * Responsibilities:
  * - Manages all bird instances
@@ -8,15 +8,17 @@
  * - Coordinates spatial partitioning
  * - Applies environmental forces
  * - Tracks simulation statistics
+ * - Manages feeding state transitions
  * 
  * The update loop follows this order each frame:
  * 1. Clear and rebuild spatial grid
  * 2. For each bird:
- *    a. Find neighbors using spatial grid
- *    b. Calculate swarm forces (alignment, cohesion, separation)
- *    c. Apply environmental forces (wind, predator, attractors)
- *    d. Apply boundary forces
- *    e. Update bird physics
+ *    a. Update feeding state machine
+ *    b. Find neighbors using spatial grid
+ *    c. Calculate swarm forces (alignment, cohesion, separation)
+ *    d. Apply environmental forces (wind, predator, attractors)
+ *    e. Apply boundary forces
+ *    f. Update bird physics
  * 3. Update statistics
  */
 
@@ -38,6 +40,8 @@ const tempPanicForce = new Vector2();
 const tempAttractorForce = new Vector2();
 const tempWindForce = new Vector2();
 const tempFoodForce = new Vector2();
+const tempGatherForce = new Vector2();
+const tempFeedForce = new Vector2();
 
 export class Flock {
   /** All birds in the flock */
@@ -199,10 +203,17 @@ export class Flock {
     const attractorsLen = this.attractors.length;
     const hasPredator = this.predatorPosition && this.envConfig.predatorEnabled;
     const hasWind = this.envConfig.windSpeed > 0;
+    const hasFood = this.foodManager && this.envConfig.foodEnabled;
+    const energyEnabled = this.config.energyEnabled;
     
     // Step 2: Update each bird
     for (let i = 0; i < birdsLen; i++) {
       const bird = this.birds[i];
+      
+      // Update feeding state machine (if food is enabled)
+      if (hasFood && energyEnabled) {
+        this.updateFeedingState(bird, dt);
+      }
       
       // Find neighbors using spatial grid (returns view into buffer)
       const neighbors = this.spatialGrid.getNeighbors(
@@ -212,24 +223,70 @@ export class Flock {
         this.config.fieldOfView
       );
       
-      // Calculate swarm forces (result stored in tempSwarmForce)
-      this.rules.calculate(
-        bird,
-        neighbors,
-        this.config,
-        this.envConfig,
-        this.simulationTime,
-        tempSwarmForce
-      );
-      bird.applyForce(tempSwarmForce);
-      
-      // Apply wind force
-      if (hasWind) {
-        this.calculateWindForce(bird, tempWindForce);
-        bird.applyForce(tempWindForce);
+      // Apply forces based on feeding state
+      if (bird.feedingState === 'none') {
+        // Normal flocking behavior
+        this.rules.calculate(
+          bird,
+          neighbors,
+          this.config,
+          this.envConfig,
+          this.simulationTime,
+          tempSwarmForce
+        );
+        bird.applyForce(tempSwarmForce);
+        
+        // Apply wind force (reduced when feeding)
+        if (hasWind) {
+          this.calculateWindForce(bird, tempWindForce);
+          bird.applyForce(tempWindForce);
+        }
+        
+        // Apply attractor forces
+        for (let j = 0; j < attractorsLen; j++) {
+          const attractor = this.attractors[j];
+          this.rules.calculateAttractorForce(
+            bird,
+            attractor.position.x,
+            attractor.position.y,
+            attractor.strength,
+            attractor.radius,
+            attractor.isRepulsor,
+            this.config.maxForce,
+            tempAttractorForce
+          );
+          bird.applyForce(tempAttractorForce);
+        }
+        
+        // Energy-based food seeking (old behavior when not in feeding state)
+        if (hasFood && energyEnabled) {
+          const energyUrgency = 1 - bird.energy;
+          if (energyUrgency > 0.3) {
+            const foodStrength = this.envConfig.foodAttractionStrength * (1 + energyUrgency * 2);
+            const foundFood = this.foodManager!.getAttractionForce(
+              bird.position,
+              foodStrength,
+              this.envConfig.foodAttractionRadius,
+              tempFoodForce
+            );
+            if (foundFood) {
+              bird.applyForce(tempFoodForce);
+            }
+          }
+        }
+      } else {
+        // Bird is in a feeding state - apply feeding-specific forces
+        this.applyFeedingForces(bird, neighbors, dt);
+        
+        // Reduced wind when feeding
+        if (hasWind && bird.feedingState !== 'feeding') {
+          this.calculateWindForce(bird, tempWindForce);
+          tempWindForce.mult(0.3); // Reduced wind effect
+          bird.applyForce(tempWindForce);
+        }
       }
       
-      // Apply predator panic using predator's actual panic radius
+      // Apply predator panic (always active, can interrupt feeding)
       if (hasPredator) {
         this.rules.calculatePanicResponse(
           bird,
@@ -239,6 +296,11 @@ export class Flock {
           tempPanicForce
         );
         bird.applyForce(tempPanicForce);
+        
+        // If panicking, stop feeding
+        if (bird.panicLevel > 0.5 && bird.feedingState !== 'none') {
+          this.exitFeedingState(bird);
+        }
         
         // Propagate panic to nearby birds
         if (bird.panicLevel > 0.3) {
@@ -250,23 +312,7 @@ export class Flock {
         }
       }
       
-      // Apply attractor forces
-      for (let j = 0; j < attractorsLen; j++) {
-        const attractor = this.attractors[j];
-        this.rules.calculateAttractorForce(
-          bird,
-          attractor.position.x,
-          attractor.position.y,
-          attractor.strength,
-          attractor.radius,
-          attractor.isRepulsor,
-          this.config.maxForce,
-          tempAttractorForce
-        );
-        bird.applyForce(tempAttractorForce);
-      }
-      
-      // Apply boundary avoidance
+      // Apply boundary avoidance (always)
       bird.applyBoundaryForce(
         this.width,
         this.height,
@@ -274,43 +320,243 @@ export class Flock {
         this.config.boundaryForce
       );
       
-      // Energy-based food seeking (hungry creatures seek food more)
-      if (this.config.energyEnabled && this.foodManager && this.envConfig.foodEnabled) {
-        // Low energy creatures are more attracted to food
-        const energyUrgency = 1 - bird.energy; // 0 when full, 1 when empty
-        if (energyUrgency > 0.3) {
-          const foodStrength = this.envConfig.foodAttractionStrength * (1 + energyUrgency * 2);
-          const hasFood = this.foodManager.getAttractionForce(
-            bird.position,
-            foodStrength,
-            this.envConfig.foodAttractionRadius,
-            tempFoodForce
-          );
-          if (hasFood) {
-            bird.applyForce(tempFoodForce);
-          }
-        }
-        
-        // Check for food consumption and restore energy
-        const energyRestored = this.foodManager.consume(
-          bird.position,
-          1,
-          this.config.foodEnergyRestore
-        );
-        if (energyRestored > 0) {
-          bird.restoreEnergy(energyRestored);
-        }
-      }
-      
       // Update bird physics (with energy parameters)
       bird.update(
         dt,
         this.config,
-        this.config.energyEnabled,
+        energyEnabled,
         this.config.energyDecayRate,
         this.config.minEnergySpeed
       );
     }
+  }
+  
+  /**
+   * Update the feeding state machine for a bird
+   */
+  private updateFeedingState(bird: Bird, dt: number): void {
+    if (!this.foodManager) return;
+    
+    const gatherRadius = this.envConfig.gatherRadius || 50;
+    const feedingDuration = this.envConfig.feedingDuration || 2;
+    const maxFeeders = this.envConfig.maxFeedersPerFood || 20;
+    
+    switch (bird.feedingState) {
+      case 'none': {
+        // Check if bird should start approaching food
+        const energyUrgency = 1 - bird.energy;
+        if (energyUrgency > 0.4) { // Only seek food when energy < 60%
+          const nearestFood = this.foodManager.getNearestAvailableFood(
+            bird.position,
+            this.envConfig.foodAttractionRadius,
+            maxFeeders
+          );
+          
+          if (nearestFood) {
+            bird.startApproachingFood(nearestFood.id);
+          }
+        }
+        break;
+      }
+      
+      case 'approaching': {
+        // Check if target food is still valid
+        if (!this.foodManager.isSourceValid(bird.targetFoodId)) {
+          this.exitFeedingState(bird);
+          break;
+        }
+        
+        const source = this.foodManager.getSourceById(bird.targetFoodId);
+        if (!source) {
+          this.exitFeedingState(bird);
+          break;
+        }
+        
+        // Check distance to food
+        const dx = source.position.x - bird.position.x;
+        const dy = source.position.y - bird.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // Transition to gathering when close enough
+        if (dist < gatherRadius * 1.5) {
+          bird.startGathering();
+        }
+        
+        // Give up if bird's energy is restored
+        if (bird.energy > 0.9) {
+          this.exitFeedingState(bird);
+        }
+        break;
+      }
+      
+      case 'gathering': {
+        // Check if target food is still valid
+        if (!this.foodManager.isSourceValid(bird.targetFoodId)) {
+          this.exitFeedingState(bird);
+          break;
+        }
+        
+        const source = this.foodManager.getSourceById(bird.targetFoodId);
+        if (!source) {
+          this.exitFeedingState(bird);
+          break;
+        }
+        
+        // Check distance to food
+        const dx = source.position.x - bird.position.x;
+        const dy = source.position.y - bird.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // Transition to feeding when very close
+        if (dist < 20) {
+          // Try to register as feeder
+          if (this.foodManager.registerFeeder(bird.id, bird.targetFoodId, maxFeeders)) {
+            bird.startFeeding();
+          }
+        }
+        
+        // If pushed too far out, go back to approaching
+        if (dist > gatherRadius * 2) {
+          bird.startApproachingFood(bird.targetFoodId);
+        }
+        
+        // Give up if bird's energy is restored
+        if (bird.energy > 0.9) {
+          this.exitFeedingState(bird);
+        }
+        break;
+      }
+      
+      case 'feeding': {
+        // Check if food is still valid
+        if (!this.foodManager.isSourceValid(bird.targetFoodId)) {
+          this.exitFeedingState(bird);
+          break;
+        }
+        
+        // Increment feeding timer
+        bird.feedingTimer += dt;
+        
+        // Restore energy while feeding
+        const energyRestore = this.config.foodEnergyRestore * dt;
+        bird.restoreEnergy(energyRestore);
+        
+        // Exit conditions:
+        // 1. Energy is full
+        // 2. Minimum feeding duration met and energy is above 80%
+        const minDurationMet = bird.feedingTimer >= feedingDuration;
+        const energySatisfied = bird.energy > 0.8;
+        
+        if (bird.energy >= 1.0 || (minDurationMet && energySatisfied)) {
+          this.exitFeedingState(bird);
+        }
+        break;
+      }
+    }
+  }
+  
+  /**
+   * Apply forces based on the bird's current feeding state
+   */
+  private applyFeedingForces(bird: Bird, neighbors: Bird[], _dt: number): void {
+    if (!this.foodManager) return;
+    
+    const source = this.foodManager.getSourceById(bird.targetFoodId);
+    if (!source) {
+      this.exitFeedingState(bird);
+      return;
+    }
+    
+    const gatherRadius = this.envConfig.gatherRadius || 50;
+    const behaviorType = this.envConfig.feedingBehavior || 'gather';
+    const reducedMaxSpeed = this.config.maxSpeed * 0.5;
+    const reducedMaxForce = this.config.maxForce * 0.8;
+    
+    switch (bird.feedingState) {
+      case 'approaching': {
+        // Move directly toward food
+        this.rules.calculateApproachingForce(
+          bird,
+          source.position,
+          this.config.maxSpeed * 0.8,
+          this.config.maxForce,
+          tempGatherForce
+        );
+        bird.applyForce(tempGatherForce);
+        
+        // Reduced separation from other birds
+        if (neighbors.length > 0) {
+          tempSwarmForce.zero();
+          for (const other of neighbors) {
+            const dx = bird.position.x - other.position.x;
+            const dy = bird.position.y - other.position.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < 100 && distSq > 0) { // Very close separation only
+              const dist = Math.sqrt(distSq);
+              tempSwarmForce.x += (dx / dist) * 0.1;
+              tempSwarmForce.y += (dy / dist) * 0.1;
+            }
+          }
+          bird.applyForce(tempSwarmForce);
+        }
+        break;
+      }
+      
+      case 'gathering': {
+        // Orbit around food
+        this.rules.calculateGatheringForce(
+          bird,
+          source.position,
+          gatherRadius,
+          behaviorType,
+          reducedMaxSpeed,
+          reducedMaxForce,
+          tempGatherForce
+        );
+        bird.applyForce(tempGatherForce);
+        
+        // Still apply some separation from very close neighbors
+        if (neighbors.length > 0) {
+          tempSwarmForce.zero();
+          for (const other of neighbors) {
+            const dx = bird.position.x - other.position.x;
+            const dy = bird.position.y - other.position.y;
+            const distSq = dx * dx + dy * dy;
+            const sepRadius = this.config.separationRadius * 0.5;
+            if (distSq < sepRadius * sepRadius && distSq > 0) {
+              const dist = Math.sqrt(distSq);
+              tempSwarmForce.x += (dx / dist) * 0.15;
+              tempSwarmForce.y += (dy / dist) * 0.15;
+            }
+          }
+          bird.applyForce(tempSwarmForce);
+        }
+        break;
+      }
+      
+      case 'feeding': {
+        // Stay at food source
+        this.rules.calculateFeedingForce(
+          bird,
+          source.position,
+          this.config.maxSpeed * 0.1,
+          this.config.maxForce * 0.5,
+          tempFeedForce
+        );
+        bird.applyForce(tempFeedForce);
+        break;
+      }
+    }
+  }
+  
+  /**
+   * Exit feeding state and return to normal behavior
+   */
+  private exitFeedingState(bird: Bird): void {
+    if (this.foodManager && bird.targetFoodId >= 0) {
+      this.foodManager.unregisterFeeder(bird.id);
+    }
+    bird.stopFeeding();
   }
 
   /**
@@ -478,6 +724,15 @@ export class Flock {
    * Reset simulation
    */
   reset(): void {
+    // Unregister all feeders before resetting
+    if (this.foodManager) {
+      for (const bird of this.birds) {
+        if (bird.feedingState !== 'none') {
+          this.foodManager.unregisterFeeder(bird.id);
+        }
+      }
+    }
+    
     this.initializeBirds(this.config.birdCount);
     this.attractors = [];
     this.predatorPosition = null;

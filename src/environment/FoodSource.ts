@@ -1,6 +1,6 @@
 /**
  * Food Source Manager - Food/resource mechanics for the simulation
- * Version: 1.1.0 - Added energy restoration for creatures
+ * Version: 1.2.0 - Added feeding behavior and feeder tracking
  * 
  * Food sources attract creatures, creating natural gathering points.
  * Features:
@@ -8,6 +8,8 @@
  * - Food depletes when consumed by creatures
  * - Respawns after cooldown period
  * - Visual feedback showing food amount
+ * - Tracks creatures currently feeding at each source
+ * - Supports multiple creatures gathering and consuming simultaneously
  */
 
 import { Vector2 } from '../utils/Vector2';
@@ -63,7 +65,9 @@ export class FoodSourceManager {
       maxAmount: 100,
       radius,
       respawnTimer: 0,
-      consumed: false
+      consumed: false,
+      feeders: new Set<number>(),
+      consumptionRate: 0
     };
     
     this.sources.set(id, source);
@@ -71,7 +75,7 @@ export class FoodSourceManager {
   }
 
   /**
-   * Update all food sources (respawn depleted ones)
+   * Update all food sources (respawn depleted ones, consume from feeders)
    */
   update(deltaTime: number, config: IEnvironmentConfig): void {
     if (!config.foodEnabled) return;
@@ -87,6 +91,28 @@ export class FoodSourceManager {
           source.position.y = margin + Math.random() * (this.height - margin * 2);
           source.amount = source.maxAmount;
           source.consumed = false;
+          source.feeders.clear();
+          source.consumptionRate = 0;
+        }
+      } else {
+        // Calculate consumption based on number of feeders
+        const feederCount = source.feeders.size;
+        if (feederCount > 0) {
+          const consumptionPerFeeder = config.consumptionPerFeeder || 1;
+          source.consumptionRate = feederCount * consumptionPerFeeder;
+          const consumed = source.consumptionRate * deltaTime;
+          source.amount -= consumed;
+          this.totalConsumed += consumed;
+          
+          if (source.amount <= 0) {
+            source.amount = 0;
+            source.consumed = true;
+            source.respawnTimer = config.foodRespawnTime || 10;
+            source.feeders.clear();
+            source.consumptionRate = 0;
+          }
+        } else {
+          source.consumptionRate = 0;
         }
       }
     }
@@ -237,6 +263,147 @@ export class FoodSourceManager {
    */
   resetStats(): void {
     this.totalConsumed = 0;
+  }
+
+  /**
+   * Register a bird as a feeder at a specific food source
+   * @returns true if successfully registered, false if food is consumed or at max capacity
+   */
+  registerFeeder(birdId: number, foodId: number, maxFeeders: number = 20): boolean {
+    const source = this.sources.get(foodId);
+    if (!source || source.consumed) {
+      return false;
+    }
+    
+    // Check max feeder capacity
+    if (source.feeders.size >= maxFeeders) {
+      return false;
+    }
+    
+    source.feeders.add(birdId);
+    return true;
+  }
+
+  /**
+   * Unregister a bird from all food sources it may be feeding at
+   */
+  unregisterFeeder(birdId: number): void {
+    for (const source of this.sources.values()) {
+      source.feeders.delete(birdId);
+    }
+  }
+
+  /**
+   * Unregister a bird from a specific food source
+   */
+  unregisterFeederFromSource(birdId: number, foodId: number): void {
+    const source = this.sources.get(foodId);
+    if (source) {
+      source.feeders.delete(birdId);
+    }
+  }
+
+  /**
+   * Get the number of feeders at a food source
+   */
+  getFeederCount(foodId: number): number {
+    const source = this.sources.get(foodId);
+    return source ? source.feeders.size : 0;
+  }
+
+  /**
+   * Check if a food source can accept more feeders
+   */
+  canAcceptMoreFeeders(foodId: number, maxFeeders: number = 20): boolean {
+    const source = this.sources.get(foodId);
+    if (!source || source.consumed) {
+      return false;
+    }
+    return source.feeders.size < maxFeeders;
+  }
+
+  /**
+   * Get food source by ID
+   */
+  getSourceById(foodId: number): IFoodSource | undefined {
+    return this.sources.get(foodId);
+  }
+
+  /**
+   * Find the nearest available food source (not consumed and has capacity)
+   * @returns The nearest food source or null if none available
+   */
+  getNearestAvailableFood(
+    position: Vector2,
+    radius: number,
+    maxFeeders: number = 20
+  ): IFoodSource | null {
+    let closestDistSq = radius * radius;
+    let closestSource: IFoodSource | null = null;
+    
+    for (const source of this.sources.values()) {
+      // Skip consumed sources or those at capacity
+      if (source.consumed || source.feeders.size >= maxFeeders) {
+        continue;
+      }
+      
+      const dx = source.position.x - position.x;
+      const dy = source.position.y - position.y;
+      const distSq = dx * dx + dy * dy;
+      
+      if (distSq < closestDistSq) {
+        closestDistSq = distSq;
+        closestSource = source;
+      }
+    }
+    
+    return closestSource;
+  }
+
+  /**
+   * Check if a bird is currently registered as a feeder at any food source
+   */
+  isBirdFeeding(birdId: number): boolean {
+    for (const source of this.sources.values()) {
+      if (source.feeders.has(birdId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Get the food source ID that a bird is feeding at
+   * @returns The food source ID or -1 if not feeding
+   */
+  getFoodSourceForBird(birdId: number): number {
+    for (const source of this.sources.values()) {
+      if (source.feeders.has(birdId)) {
+        return source.id;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Check if a food source is still valid (exists and not consumed)
+   */
+  isSourceValid(foodId: number): boolean {
+    const source = this.sources.get(foodId);
+    return source !== undefined && !source.consumed;
+  }
+
+  /**
+   * Get total number of creatures currently feeding across all sources
+   */
+  getTotalFeeders(): number {
+    let total = 0;
+    for (const source of this.sources.values()) {
+      if (!source.consumed) {
+        total += source.feeders.size;
+      }
+    }
+    return total;
   }
 }
 

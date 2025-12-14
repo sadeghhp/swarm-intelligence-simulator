@@ -1,6 +1,6 @@
 /**
  * Bird Entity - Core simulation unit for swarm behavior
- * Version: 1.2.0 - Added energy/stamina system
+ * Version: 1.3.0 - Added feeding behavior states
  * 
  * Each bird maintains its own physics state:
  * - Position: Current location in 2D space
@@ -14,7 +14,7 @@
  */
 
 import { Vector2 } from '../utils/Vector2';
-import type { ISimulationConfig } from '../types';
+import type { ISimulationConfig, FeedingState } from '../types';
 
 // Pre-allocated vectors for all birds (static to avoid per-bird allocation)
 const tempVec = new Vector2();
@@ -44,6 +44,15 @@ export class Bird {
   
   /** Species identifier for multi-species ecosystem */
   public speciesId: string = 'default';
+  
+  /** Current feeding behavior state */
+  public feedingState: FeedingState = 'none';
+  
+  /** ID of the food source this bird is targeting (-1 if none) */
+  public targetFoodId: number = -1;
+  
+  /** Timer for how long bird has been feeding (seconds) */
+  public feedingTimer: number = 0;
   
   /** Cached heading angle for rendering */
   private _heading: number = 0;
@@ -255,6 +264,49 @@ export class Bird {
     this.panicLevel = 0;
     this.localDensity = 0;
     this.energy = 1.0;
+    this.feedingState = 'none';
+    this.targetFoodId = -1;
+    this.feedingTimer = 0;
+  }
+  
+  /**
+   * Start approaching a food source
+   */
+  startApproachingFood(foodId: number): void {
+    this.feedingState = 'approaching';
+    this.targetFoodId = foodId;
+    this.feedingTimer = 0;
+  }
+  
+  /**
+   * Transition to gathering state (orbiting around food)
+   */
+  startGathering(): void {
+    this.feedingState = 'gathering';
+  }
+  
+  /**
+   * Transition to feeding state (consuming food)
+   */
+  startFeeding(): void {
+    this.feedingState = 'feeding';
+    this.feedingTimer = 0;
+  }
+  
+  /**
+   * Stop feeding and return to normal behavior
+   */
+  stopFeeding(): void {
+    this.feedingState = 'none';
+    this.targetFoodId = -1;
+    this.feedingTimer = 0;
+  }
+  
+  /**
+   * Check if bird is currently in any feeding-related state
+   */
+  isFeeding(): boolean {
+    return this.feedingState !== 'none';
   }
 
   /**

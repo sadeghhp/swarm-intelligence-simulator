@@ -1,6 +1,6 @@
 /**
  * Control Panel - Tweakpane integration for real-time parameter adjustment
- * Version: 1.5.0 - Added ecosystem, day/night, and territory controls
+ * Version: 1.6.0 - Added ocean predators (shark, orca, barracuda, sea_lion)
  * 
  * Provides organized controls for all simulation parameters:
  * - Creature presets (starlings, insects, fish, bats, fireflies)
@@ -8,6 +8,7 @@
  * - Simulation controls (count, speed, pause/reset)
  * - Swarm rule weights
  * - Environmental settings (wind, predator, food)
+ * - Air & ocean predators with unique hunting styles
  * - Visual customization (size, colors, effects)
  */
 
@@ -150,6 +151,7 @@ export class ControlPanel {
         'Jellyfish': 'jellyfish',
         'Sparrows': 'sparrows',
         'Plankton': 'plankton',
+        'Atlantic Herring': 'herring',
         'Custom': 'custom'
       }
     }).on('change', (ev) => {
@@ -660,10 +662,16 @@ export class ControlPanel {
     predatorFolder.addBinding(predatorTypeState, 'type', {
       label: 'Type',
       options: {
-        'Hawk (Edge Hunter)': 'hawk',
-        'Falcon (Stoop Diver)': 'falcon',
-        'Eagle (Pursuer)': 'eagle',
-        'Owl (Ambusher)': 'owl'
+        // Air predators
+        '🦅 Hawk (Edge Hunter)': 'hawk',
+        '🦅 Falcon (Stoop Diver)': 'falcon',
+        '🦅 Eagle (Pursuer)': 'eagle',
+        '🦉 Owl (Ambusher)': 'owl',
+        // Ocean predators
+        '🦈 Shark (Circler)': 'shark',
+        '🐋 Orca (Pack Hunter)': 'orca',
+        '🐟 Barracuda (Ambusher)': 'barracuda',
+        '🦭 Sea Lion (Agile)': 'sea_lion'
       }
     }).on('change', (ev) => {
       this.envConfig.predatorType = ev.value as PredatorType;
@@ -715,7 +723,7 @@ export class ControlPanel {
       view: 'text',
       label: 'Info',
       parse: (v: string) => v,
-      value: 'Different types have unique hunting behaviors'
+      value: 'Air & ocean predators with unique hunting styles'
     });
   }
 
