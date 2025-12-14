@@ -7,8 +7,9 @@ A high-performance, real-time starling murmuration simulator demonstrating emerg
 ![Vite](https://img.shields.io/badge/Vite-6.0-646CFF?logo=vite)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-<!-- Add a demo GIF or screenshot here -->
-<!-- ![Demo](./docs/demo.gif) -->
+## 🚀 Live Demo
+
+**[▶️ Try the Simulator](https://sadeghhp.github.io/swarm-intelligence-simulator/)**
 
 ---
 
