@@ -112,8 +112,8 @@ export class BarracudaPredator extends BasePredator {
    * Find strategic ambush position
    */
   private updateFindAmbushSpot(
-    deltaTime: number,
-    config: IEnvironmentConfig,
+    _deltaTime: number,
+    _config: IEnvironmentConfig,
     birds: Bird[],
     flockCenter: Vector2
   ): void {
@@ -181,9 +181,9 @@ export class BarracudaPredator extends BasePredator {
    */
   private updateAmbush(
     deltaTime: number,
-    config: IEnvironmentConfig,
+    _config: IEnvironmentConfig,
     birds: Bird[],
-    flockCenter: Vector2
+    _flockCenter: Vector2
   ): void {
     this.ambushTime += deltaTime;
 
@@ -260,7 +260,7 @@ export class BarracudaPredator extends BasePredator {
    */
   private updateBurstAttack(
     deltaTime: number,
-    config: IEnvironmentConfig,
+    _config: IEnvironmentConfig,
     birds: Bird[]
   ): void {
     const targetBird = birds.find(b => b.id === this.targetBirdId);
@@ -341,7 +341,7 @@ export class BarracudaPredator extends BasePredator {
   /**
    * Override to use ambushing state
    */
-  protected beginHunt(flockCenter: Vector2): void {
+  protected beginHunt(_flockCenter: Vector2): void {
     this.setState('scanning');
     this.huntDuration = 0;
   }

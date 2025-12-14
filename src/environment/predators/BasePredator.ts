@@ -226,7 +226,7 @@ export abstract class BasePredator {
   /**
    * Common idle behavior: wander around edges
    */
-  protected updateIdle(deltaTime: number, config: IEnvironmentConfig, flockCenter: Vector2): void {
+  protected updateIdle(_deltaTime: number, config: IEnvironmentConfig, flockCenter: Vector2): void {
     // Move toward wander target
     tempToTarget.set(
       this.wanderTarget.x - this.position.x,
@@ -254,7 +254,7 @@ export abstract class BasePredator {
   /**
    * Common recovery behavior: rest and regain energy
    */
-  protected updateRecovering(deltaTime: number): void {
+  protected updateRecovering(_deltaTime: number): void {
     // Slow down significantly
     this.velocity.mult(0.98);
     

@@ -12,7 +12,11 @@
  * - Visual customization (size, colors, effects)
  */
 
-import { Pane, FolderApi } from 'tweakpane';
+import { Pane } from 'tweakpane';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TweakpanePane = any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type FolderApi = any;
 import type {
   ISimulationConfig,
   IEnvironmentConfig,
@@ -43,7 +47,7 @@ export interface ControlPanelCallbacks {
 }
 
 export class ControlPanel {
-  private pane: Pane;
+  private pane: TweakpanePane;
   private callbacks: ControlPanelCallbacks;
   
   /** Bound configuration objects */
@@ -155,7 +159,7 @@ export class ControlPanel {
         'Atlantic Herring': 'herring',
         'Custom': 'custom'
       }
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.applyPreset(ev.value as CreaturePreset);
       this.callbacks.onPresetChange(ev.value as CreaturePreset);
     });
@@ -459,7 +463,7 @@ export class ControlPanel {
       min: 100,
       max: 5000,
       step: 100
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onBirdCountChange(ev.value);
     });
     
@@ -578,7 +582,7 @@ export class ControlPanel {
       min: 15,
       max: 200,
       step: 5
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onPerceptionRadiusChange(ev.value);
     });
     
@@ -654,7 +658,7 @@ export class ControlPanel {
     
     predatorFolder.addBinding(this.envConfig, 'predatorEnabled', {
       label: 'Active'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onPredatorToggle(ev.value);
     });
     
@@ -674,7 +678,7 @@ export class ControlPanel {
         '🐟 Barracuda (Ambusher)': 'barracuda',
         '🦭 Sea Lion (Agile)': 'sea_lion'
       }
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.envConfig.predatorType = ev.value as PredatorType;
       this.callbacks.onPredatorTypeChange?.(ev.value as PredatorType);
     });
@@ -685,7 +689,7 @@ export class ControlPanel {
       min: 1,
       max: 4,
       step: 1
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onPredatorCountChange?.(ev.value);
     });
     
@@ -777,7 +781,7 @@ export class ControlPanel {
     
     foodFolder.addBinding(this.envConfig, 'foodEnabled', {
       label: 'Active'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onFoodToggle(ev.value);
     });
     
@@ -914,7 +918,7 @@ export class ControlPanel {
     
     folder.addBinding(this.ecosystemState, 'enabled', {
       label: 'Active'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onEcosystemToggle?.(ev.value);
     });
     
@@ -959,7 +963,7 @@ export class ControlPanel {
     
     folder.addBinding(this.dayNightState, 'enabled', {
       label: 'Active'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onDayNightToggle?.(ev.value);
     });
     
@@ -1008,7 +1012,7 @@ export class ControlPanel {
     
     folder.addBinding(this.territoryState, 'enabled', {
       label: 'Active'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onTerritoryToggle?.(ev.value);
     });
     
@@ -1070,21 +1074,21 @@ export class ControlPanel {
     
     folder.addBinding(colorState, 'baseColor', {
       label: 'Base Color'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.renderConfig.baseColor = parseInt(ev.value.slice(1), 16);
       this.callbacks.onColorChange();
     });
     
     folder.addBinding(colorState, 'denseColor', {
       label: 'Dense Color'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.renderConfig.denseColor = parseInt(ev.value.slice(1), 16);
       this.callbacks.onColorChange();
     });
     
     folder.addBinding(colorState, 'panicColor', {
       label: 'Panic Color'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.renderConfig.panicColor = parseInt(ev.value.slice(1), 16);
       this.callbacks.onColorChange();
     });
@@ -1127,7 +1131,7 @@ export class ControlPanel {
     // Show trails
     folder.addBinding(this.renderConfig, 'showTrails', {
       label: 'Motion Trails'
-    }).on('change', (ev) => {
+    }).on('change', (ev: any) => {
       this.callbacks.onTrailsToggle(ev.value);
     });
     

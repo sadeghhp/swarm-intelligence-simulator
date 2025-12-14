@@ -10,7 +10,7 @@
  */
 
 import { Vector2 } from '../utils/Vector2';
-import { noise, fbmNoise } from '../utils/MathUtils';
+import { fbmNoise } from '../utils/MathUtils';
 import type { IEnvironmentConfig } from '../types';
 
 export class Wind {

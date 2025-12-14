@@ -90,7 +90,21 @@ const FALLBACK_ENVIRONMENT: IEnvironmentConfig = {
   consumptionPerFeeder: 1,
   huntingEnabled: false,
   huntingSpeed: 12,
-  huntingRadius: 100
+  huntingRadius: 100,
+  // Mating & competition behavior
+  matingEnabled: false,
+  mateSearchRadius: 80,
+  mateAttractionStrength: 1.0,
+  courtingDistance: 30,
+  matingDistance: 15,
+  matingDuration: 3,
+  matingCooldown: 10,
+  fightRadius: 50,
+  fightDuration: 2,
+  fightStrength: 0.8,
+  panicSuppressesMating: true,
+  energyThresholdForMating: 0.5,
+  femaleSelectivity: 0.3
 };
 
 const FALLBACK_RENDERING: IRenderingConfig = {
