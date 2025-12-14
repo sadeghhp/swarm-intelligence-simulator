@@ -1,6 +1,6 @@
 /**
  * Main Application - Orchestrates the entire simulation
- * Version: 1.3.0 - Added energy system integration
+ * Version: 2.0.0 - Multiple predator types with unique hunting behaviors
  * 
  * This is the central hub that:
  * - Initializes PixiJS renderer
@@ -8,6 +8,7 @@
  * - Handles the main game loop
  * - Coordinates user input
  * - Manages creature presets and food sources
+ * - Supports multiple predator types (Hawk, Falcon, Eagle, Owl)
  */
 
 import * as PIXI from 'pixi.js';
@@ -17,11 +18,11 @@ import { EnvironmentRenderer } from './rendering/EnvironmentRenderer';
 import { TrailEffect } from './rendering/TrailEffect';
 import { ControlPanel } from './ui/ControlPanel';
 import { Statistics } from './ui/Statistics';
-import { Predator } from './environment/Predator';
+import { BasePredator, PredatorFactory } from './environment/predators';
 import { FoodSourceManager } from './environment/FoodSource';
 import { Vector2 } from './utils/Vector2';
 import { getConfig, type ILoadedConfig } from './config/ConfigLoader';
-import type { ISimulationConfig, IEnvironmentConfig, IRenderingConfig, CreaturePreset, ICreaturePreset } from './types';
+import type { ISimulationConfig, IEnvironmentConfig, IRenderingConfig, CreaturePreset, ICreaturePreset, PredatorType, IPredatorState } from './types';
 
 // Pre-allocated vector for flock center calculation
 const tempFlockCenter = new Vector2();
@@ -52,8 +53,11 @@ export class App {
   /** Statistics display */
   private statistics!: Statistics;
   
-  /** Predator AI */
-  private predator!: Predator;
+  /** Predator AI instances */
+  private predators: BasePredator[] = [];
+  
+  /** Current predator type */
+  private currentPredatorType: PredatorType = 'hawk';
   
   /** Food source manager */
   private foodManager!: FoodSourceManager;
@@ -116,8 +120,10 @@ export class App {
       this.envConfig
     );
     
-    // Initialize predator
-    this.predator = new Predator(this.width, this.height);
+    // Initialize predators
+    this.currentPredatorType = (this.envConfig.predatorType || 'hawk') as PredatorType;
+    const predatorCount = this.envConfig.predatorCount || 1;
+    this.initializePredators(this.currentPredatorType, predatorCount);
     
     // Initialize food manager
     this.foodManager = new FoodSourceManager(this.width, this.height);
@@ -146,6 +152,14 @@ export class App {
     
     // Initial sync
     this.flockRenderer.syncBirdCount(this.simConfig.birdCount);
+  }
+
+  /**
+   * Initialize predators based on type and count
+   */
+  private initializePredators(type: PredatorType, count: number): void {
+    this.predators = PredatorFactory.createMultiple(type, count, this.width, this.height);
+    this.currentPredatorType = type;
   }
 
   /**
@@ -181,8 +195,14 @@ export class App {
         },
         onPredatorToggle: (enabled) => {
           if (enabled) {
-            this.predator.reset();
+            this.predators.forEach(p => p.reset());
           }
+        },
+        onPredatorTypeChange: (type: PredatorType) => {
+          this.initializePredators(type, this.envConfig.predatorCount || 1);
+        },
+        onPredatorCountChange: (count: number) => {
+          this.initializePredators(this.currentPredatorType, count);
         },
         onTrailsToggle: (enabled) => {
           this.trailEffect.setEnabled(enabled);
@@ -274,7 +294,7 @@ export class App {
     this.app.renderer.resize(this.width, this.height);
     this.flock.resize(this.width, this.height);
     this.envRenderer.resize(this.width, this.height);
-    this.predator.resize(this.width, this.height);
+    this.predators.forEach(p => p.resize(this.width, this.height));
     this.foodManager.resize(this.width, this.height);
   }
 
@@ -392,11 +412,20 @@ export class App {
    * Update simulation
    */
   private update(deltaTime: number): void {
-    // Update predator
-    if (this.envConfig.predatorEnabled) {
+    // Update predators
+    if (this.envConfig.predatorEnabled && this.predators.length > 0) {
       const flockCenter = this.calculateFlockCenter();
-      this.predator.update(deltaTime, this.envConfig, this.flock.birds, flockCenter);
-      this.flock.setPredatorPosition(this.predator.position);
+      
+      // Update each predator
+      for (const predator of this.predators) {
+        predator.update(deltaTime, this.envConfig, this.flock.birds, flockCenter);
+      }
+      
+      // Set first predator position and panic radius for flock panic (main threat)
+      this.flock.setPredatorPosition(this.predators[0].position, this.predators[0].getEffectivePanicRadius());
+      
+      // Apply panic from all predators
+      this.applyPredatorPanic();
     } else {
       this.flock.setPredatorPosition(null);
     }
@@ -413,6 +442,32 @@ export class App {
     // Update trail effect
     if (this.renderConfig.showTrails) {
       this.trailEffect.update(this.flock.birds, deltaTime);
+    }
+  }
+
+  /**
+   * Apply panic effects from all predators to birds
+   * Uses getEffectivePanicRadius() to account for stealth (Owl) and altitude (Falcon)
+   */
+  private applyPredatorPanic(): void {
+    const birds = this.flock.birds;
+    
+    for (const predator of this.predators) {
+      // Use effective panic radius (accounts for Owl stealth, Falcon altitude)
+      const panicRadius = predator.getEffectivePanicRadius();
+      const panicRadiusSq = panicRadius * panicRadius;
+      
+      for (const bird of birds) {
+        const dx = bird.position.x - predator.position.x;
+        const dy = bird.position.y - predator.position.y;
+        const distSq = dx * dx + dy * dy;
+        
+        if (distSq < panicRadiusSq) {
+          const dist = Math.sqrt(distSq);
+          const panicLevel = 1 - (dist / panicRadius);
+          bird.applyPanic(panicLevel * 0.8); // Slightly reduced from single predator
+        }
+      }
     }
   }
 
@@ -473,11 +528,16 @@ export class App {
       ? this.foodManager.getAll()
       : [];
     
+    // Get predator states for rendering
+    const predatorStates: IPredatorState[] | null = this.envConfig.predatorEnabled && this.predators.length > 0
+      ? this.predators.map(p => p.getState())
+      : null;
+    
     // Update environment renderer
     this.envRenderer.update(
       1 / 60,
       this.envConfig,
-      this.envConfig.predatorEnabled ? this.predator.position : null,
+      predatorStates,
       this.flock.getAttractors(),
       foodSources
     );
@@ -488,7 +548,14 @@ export class App {
    */
   private updateStatistics(): void {
     const stats = this.flock.getStats();
-    stats.predatorState = this.predator.state;
+    
+    // Use first predator's state for display, or 'idle' if none
+    if (this.predators.length > 0) {
+      stats.predatorState = this.predators[0].state;
+      stats.predatorEnergy = this.predators[0].energy;
+      stats.predatorType = this.predators[0].type;
+    }
+    stats.activePredators = this.envConfig.predatorEnabled ? this.predators.length : 0;
     stats.foodConsumed = Math.floor(this.foodManager.totalConsumed);
     stats.activeFood = this.foodManager.getActiveCount();
     this.statistics.update(stats);
@@ -500,7 +567,7 @@ export class App {
    */
   private resetSimulation(): void {
     this.flock.reset();
-    this.predator.reset();
+    this.predators.forEach(p => p.reset());
     this.trailEffect.clear();
     this.foodManager.initialize(this.envConfig);
     this.foodManager.resetStats();

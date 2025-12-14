@@ -85,6 +85,7 @@ export class Flock {
     averageEnergy: 1.0,
     simulationTime: 0,
     predatorState: 'idle',
+    activePredators: 0,
     foodConsumed: 0,
     activeFood: 0
   };
@@ -228,12 +229,12 @@ export class Flock {
         bird.applyForce(tempWindForce);
       }
       
-      // Apply predator panic
+      // Apply predator panic using predator's actual panic radius
       if (hasPredator) {
         this.rules.calculatePanicResponse(
           bird,
           this.predatorPosition!,
-          this.envConfig.panicRadius,
+          this.predatorPanicRadius,
           this.config.maxForce * 2,
           tempPanicForce
         );
@@ -388,12 +389,18 @@ export class Flock {
     return this.attractors;
   }
 
+  /** Predator's actual panic radius (from predator type) */
+  private predatorPanicRadius: number = 150;
+
   /**
-   * Set predator position
+   * Set predator position and panic radius
    */
-  setPredatorPosition(position: Vector2 | null): void {
+  setPredatorPosition(position: Vector2 | null, panicRadius?: number): void {
     this.predatorPosition = position;
     this.stats.predatorState = position ? 'hunting' : 'idle';
+    if (panicRadius !== undefined) {
+      this.predatorPanicRadius = panicRadius;
+    }
   }
 
   /**

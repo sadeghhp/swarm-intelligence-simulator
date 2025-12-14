@@ -1,6 +1,6 @@
 {
   "$schema": "./config.schema.json",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "simulation": {
     "creaturePreset": "starlings",
     "birdCount": 200,
@@ -29,9 +29,11 @@
     "windSpeed": 0,
     "windDirection": 0,
     "windTurbulence": 0.3,
-    "predatorEnabled": false,
-    "predatorSpeed": 18,
-    "predatorAggression": 0.5,
+    "predatorEnabled": true,
+    "predatorType": "hawk",
+    "predatorCount": 1,
+    "predatorSpeed": 22,
+    "predatorAggression": 0.7,
     "panicRadius": 150,
     "panicDecay": 0.95,
     "foodEnabled": false,
@@ -257,6 +259,54 @@
       "panicColor": "#ff3366",
       "glowEnabled": false,
       "glowIntensity": 0
+    }
+  },
+  "predatorPresets": {
+    "hawk": {
+      "name": "Hawk",
+      "description": "Edge hunting specialist with burst speed (40-50 mph cruise, 120 mph dive)",
+      "huntingStyle": "edge-hunting",
+      "speed": 22,
+      "stamina": 80,
+      "burstMultiplier": 1.8,
+      "panicRadius": 120,
+      "color": "#ff6b35",
+      "difficulty": "medium"
+    },
+    "falcon": {
+      "name": "Falcon",
+      "description": "High-speed stoop diver - fastest bird alive (60 mph cruise, 200+ mph dive)",
+      "huntingStyle": "stoop-diving",
+      "speed": 18,
+      "diveSpeed": 63,
+      "stamina": 60,
+      "burstMultiplier": 3.5,
+      "panicRadius": 180,
+      "color": "#4ecdc4",
+      "difficulty": "hard"
+    },
+    "eagle": {
+      "name": "Eagle",
+      "description": "Relentless pursuit predator with incredible endurance (30-40 mph sustained)",
+      "huntingStyle": "sustained-pursuit",
+      "speed": 18,
+      "stamina": 120,
+      "pursuitBonus": 1.4,
+      "panicRadius": 200,
+      "color": "#8b4513",
+      "difficulty": "medium"
+    },
+    "owl": {
+      "name": "Owl",
+      "description": "Silent ambush predator - slow cruise, lightning strike (20 mph wait, 40 mph strike)",
+      "huntingStyle": "ambush",
+      "speed": 8,
+      "strikeSpeed": 28,
+      "stamina": 90,
+      "stealthRadius": 40,
+      "panicRadius": 80,
+      "color": "#9b59b6",
+      "difficulty": "easy"
     }
   }
 }

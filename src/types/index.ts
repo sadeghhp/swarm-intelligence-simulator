@@ -89,6 +89,8 @@ export interface IEnvironmentConfig {
   
   // Predator
   predatorEnabled: boolean;
+  predatorType: PredatorType;
+  predatorCount: number;
   predatorSpeed: number;
   predatorAggression: number;
   panicRadius: number;
@@ -126,18 +128,85 @@ export interface ISimulationStats {
   averageVelocity: number;
   averageEnergy: number;
   simulationTime: number;
-  predatorState: 'idle' | 'hunting' | 'attacking';
+  predatorState: PredatorBehaviorState;
+  predatorEnergy?: number;
+  predatorType?: PredatorType;
+  activePredators: number;
   foodConsumed: number;
   activeFood: number;
 }
 
-/** Predator state */
+/** Predator types - different hunting strategies */
+export type PredatorType = 'hawk' | 'falcon' | 'eagle' | 'owl';
+
+/** Predator behavior states */
+export type PredatorBehaviorState = 
+  | 'idle'           // Resting or wandering
+  | 'scanning'       // Looking for targets
+  | 'stalking'       // Approaching without triggering panic
+  | 'hunting'        // Active pursuit
+  | 'attacking'      // Final strike
+  | 'diving'         // Falcon-specific dive attack
+  | 'ambushing'      // Owl-specific wait state
+  | 'recovering';    // Post-attack cooldown
+
+/** Predator energy/stamina statistics */
+export interface IPredatorStats {
+  maxEnergy: number;           // Maximum energy (100 baseline)
+  energyRegenRate: number;     // Energy regeneration per second while idle
+  huntingDrain: number;        // Energy drain per second while hunting
+  attackCost: number;          // One-time energy cost per attack
+  exhaustionThreshold: number; // Must rest when energy below this
+  burstMultiplier: number;     // Speed multiplier during burst/attack
+  staminaRecoveryDelay: number; // Seconds before energy starts recovering
+}
+
+/** Predator preset configuration per type */
+export interface IPredatorPreset {
+  name: string;
+  description: string;
+  speed: number;
+  diveSpeed?: number;          // Falcon-specific
+  strikeSpeed?: number;        // Owl-specific
+  stamina: number;
+  burstMultiplier: number;
+  pursuitBonus?: number;       // Eagle-specific
+  stealthRadius?: number;      // Owl-specific
+  panicRadius: number;
+  color: string;
+  stats: IPredatorStats;
+}
+
+/** Extended predator state with energy and type info */
 export interface IPredatorState {
+  id: number;
+  type: PredatorType;
   position: IVector2;
   velocity: IVector2;
   target: IVector2 | null;
-  state: 'idle' | 'hunting' | 'attacking';
+  targetBirdId: number | null;
+  state: PredatorBehaviorState;
+  energy: number;
+  maxEnergy: number;
   cooldown: number;
+  panicRadius: number;         // Effective panic radius (accounts for stealth/altitude)
+  altitude?: number;           // Falcon-specific (simulated)
+  isStealthed?: boolean;       // Owl-specific
+  huntDuration: number;        // Time spent in current hunt
+  successfulHunts: number;
+  failedHunts: number;
+}
+
+/** Target selection scoring for intelligent prey selection */
+export interface ITargetScore {
+  birdId: number;
+  position: IVector2;
+  isolationScore: number;      // How far from neighbors
+  edgeScore: number;           // Distance from flock center
+  velocityScore: number;       // Moving away from flock
+  panicScore: number;          // Already panicked
+  interceptScore: number;      // Feasibility of intercept
+  totalScore: number;
 }
 
 /** Attractor/Repulsor */

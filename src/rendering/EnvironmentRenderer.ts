@@ -1,16 +1,24 @@
 /**
  * Environment Renderer - Visualizes environmental elements
- * Version: 1.0.0
+ * Version: 2.0.0 - Multiple predator types with distinct visuals
  * 
  * Renders:
  * - Wind particles showing direction and strength
- * - Predator sprite with attack indicator
+ * - Multiple predator types with unique shapes/colors
  * - Attractors/repulsors with pulsing effect
+ * - Food sources
  */
 
 import * as PIXI from 'pixi.js';
-import type { IAttractor, IEnvironmentConfig, IRenderingConfig, IFoodSource } from '../types';
+import type { IAttractor, IEnvironmentConfig, IRenderingConfig, IFoodSource, IPredatorState, PredatorType } from '../types';
 import { Vector2 } from '../utils/Vector2';
+
+/** Predator visual configuration */
+interface PredatorVisualConfig {
+  color: number;
+  size: number;
+  shape: 'triangle' | 'arrow' | 'circle' | 'oval';
+}
 
 interface WindParticle {
   x: number;
@@ -124,7 +132,7 @@ export class EnvironmentRenderer {
   update(
     deltaTime: number,
     envConfig: IEnvironmentConfig,
-    predatorPosition: Vector2 | null,
+    predatorStates: IPredatorState[] | null,
     attractors: IAttractor[],
     foodSources: IFoodSource[] = []
   ): void {
@@ -138,9 +146,9 @@ export class EnvironmentRenderer {
       this.windContainer.visible = false;
     }
     
-    // Update predator
-    if (predatorPosition && envConfig.predatorEnabled) {
-      this.updatePredator(predatorPosition, envConfig.panicRadius);
+    // Update predators
+    if (predatorStates && predatorStates.length > 0 && envConfig.predatorEnabled) {
+      this.updatePredators(predatorStates);
     } else {
       this.predatorGraphics.visible = false;
       this.predatorRangeGraphics.visible = false;
@@ -270,46 +278,247 @@ export class EnvironmentRenderer {
   }
 
   /**
-   * Update predator visual
+   * Get visual configuration for a predator type
    */
-  private updatePredator(position: Vector2, panicRadius: number): void {
+  private getPredatorVisual(type: PredatorType): PredatorVisualConfig {
+    switch (type) {
+      case 'hawk':
+        return { color: 0xff6b35, size: 12, shape: 'triangle' };
+      case 'falcon':
+        return { color: 0x4ecdc4, size: 10, shape: 'arrow' };
+      case 'eagle':
+        return { color: 0x8b4513, size: 16, shape: 'triangle' };
+      case 'owl':
+        return { color: 0x9b59b6, size: 14, shape: 'oval' };
+      default:
+        return { color: 0xff3366, size: 12, shape: 'circle' };
+    }
+  }
+
+  /**
+   * Update multiple predator visuals
+   * Each predator's effective panic radius is in its state (accounts for stealth/altitude)
+   */
+  private updatePredators(predatorStates: IPredatorState[]): void {
     this.predatorGraphics.visible = true;
-    
-    // Draw predator (hawk shape)
     this.predatorGraphics.clear();
+    this.predatorRangeGraphics.clear();
     
-    // Body
-    this.predatorGraphics.circle(position.x, position.y, 12);
-    this.predatorGraphics.fill({ color: 0xff3366 });
-    
-    // Pulsing effect
-    const pulse = Math.sin(this.time * 5) * 0.3 + 0.7;
-    this.predatorGraphics.circle(position.x, position.y, 16 * pulse);
-    this.predatorGraphics.fill({ color: 0xff3366, alpha: 0.3 });
-    
-    // Panic range indicator
-    if (this.renderConfig.showPredatorRange) {
-      this.predatorRangeGraphics.visible = true;
-      this.predatorRangeGraphics.clear();
+    for (const state of predatorStates) {
+      const visual = this.getPredatorVisual(state.type);
+      const pos = state.position;
+      const vel = state.velocity;
       
-      // Draw dashed circle for panic radius
-      const segments = 32;
-      for (let i = 0; i < segments; i += 2) {
-        const startAngle = (i / segments) * Math.PI * 2;
-        const endAngle = ((i + 1) / segments) * Math.PI * 2;
+      // Calculate heading from velocity
+      const heading = Math.atan2(vel.y, vel.x);
+      
+      // State-based effects
+      const isActive = state.state === 'hunting' || state.state === 'attacking' || state.state === 'diving';
+      const isStealthed = (state as any).isStealthed === true;
+      const altitude = (state as any).altitude ?? 0;
+      
+      // Pulsing effect (faster when active)
+      const pulseSpeed = isActive ? 8 : 4;
+      const pulse = Math.sin(this.time * pulseSpeed + state.id) * 0.2 + 0.9;
+      
+      // Alpha based on stealth and altitude
+      let alpha = 1.0;
+      if (isStealthed) alpha = 0.4;
+      if (altitude > 0) alpha = 0.6 + altitude * 0.4; // More visible at altitude
+      
+      // Draw predator shape based on type
+      this.drawPredatorShape(pos.x, pos.y, heading, visual, pulse, alpha, state);
+      
+      // Draw energy bar
+      this.drawEnergyBar(pos.x, pos.y, state.energy, state.maxEnergy, visual.color);
+      
+      // Draw panic range indicator using predator's effective panic radius
+      if (this.renderConfig.showPredatorRange) {
+        this.predatorRangeGraphics.visible = true;
+        // Use the predator's actual effective panic radius from state
+        const effectivePanicRadius = state.panicRadius;
+        const rangeAlpha = isStealthed ? 0.15 : 0.3;
         
-        this.predatorRangeGraphics.moveTo(
-          position.x + Math.cos(startAngle) * panicRadius,
-          position.y + Math.sin(startAngle) * panicRadius
-        );
-        this.predatorRangeGraphics.lineTo(
-          position.x + Math.cos(endAngle) * panicRadius,
-          position.y + Math.sin(endAngle) * panicRadius
-        );
+        this.drawDashedCircle(pos.x, pos.y, effectivePanicRadius, visual.color, rangeAlpha);
       }
-      this.predatorRangeGraphics.stroke({ width: 1, color: 0xff3366, alpha: 0.3 });
-    } else {
+      
+      // Draw target line if hunting
+      if (state.target && isActive) {
+        this.predatorGraphics.moveTo(pos.x, pos.y);
+        this.predatorGraphics.lineTo(state.target.x, state.target.y);
+        this.predatorGraphics.stroke({ width: 1, color: visual.color, alpha: 0.4 });
+      }
+      
+      // Falcon dive trail
+      if (state.type === 'falcon' && state.state === 'diving') {
+        this.drawDiveTrail(pos.x, pos.y, vel.x, vel.y, visual.color);
+      }
+      
+      // Hawk burst effect
+      if (state.type === 'hawk' && isActive) {
+        this.drawSpeedLines(pos.x, pos.y, heading, visual.color);
+      }
+    }
+    
+    if (!this.renderConfig.showPredatorRange) {
       this.predatorRangeGraphics.visible = false;
+    }
+  }
+
+  /**
+   * Draw predator shape based on type
+   */
+  private drawPredatorShape(
+    x: number, y: number, heading: number,
+    visual: PredatorVisualConfig, pulse: number, alpha: number,
+    state: IPredatorState
+  ): void {
+    const size = visual.size * pulse;
+    
+    switch (visual.shape) {
+      case 'triangle':
+        // Angular triangle (hawk/eagle)
+        this.predatorGraphics.moveTo(
+          x + Math.cos(heading) * size * 1.5,
+          y + Math.sin(heading) * size * 1.5
+        );
+        this.predatorGraphics.lineTo(
+          x + Math.cos(heading + 2.5) * size,
+          y + Math.sin(heading + 2.5) * size
+        );
+        this.predatorGraphics.lineTo(
+          x + Math.cos(heading - 2.5) * size,
+          y + Math.sin(heading - 2.5) * size
+        );
+        this.predatorGraphics.closePath();
+        this.predatorGraphics.fill({ color: visual.color, alpha });
+        break;
+        
+      case 'arrow':
+        // Sleek arrow (falcon)
+        this.predatorGraphics.moveTo(
+          x + Math.cos(heading) * size * 2,
+          y + Math.sin(heading) * size * 2
+        );
+        this.predatorGraphics.lineTo(
+          x + Math.cos(heading + 2.8) * size * 0.8,
+          y + Math.sin(heading + 2.8) * size * 0.8
+        );
+        this.predatorGraphics.lineTo(
+          x + Math.cos(heading + Math.PI) * size * 0.5,
+          y + Math.sin(heading + Math.PI) * size * 0.5
+        );
+        this.predatorGraphics.lineTo(
+          x + Math.cos(heading - 2.8) * size * 0.8,
+          y + Math.sin(heading - 2.8) * size * 0.8
+        );
+        this.predatorGraphics.closePath();
+        this.predatorGraphics.fill({ color: visual.color, alpha });
+        break;
+        
+      case 'oval':
+        // Rounded oval (owl)
+        this.predatorGraphics.ellipse(x, y, size * 0.8, size * 1.2);
+        this.predatorGraphics.fill({ color: visual.color, alpha });
+        // Eyes
+        const eyeOffset = size * 0.3;
+        this.predatorGraphics.circle(x - eyeOffset, y - size * 0.3, 3);
+        this.predatorGraphics.circle(x + eyeOffset, y - size * 0.3, 3);
+        this.predatorGraphics.fill({ color: 0xffff00, alpha: alpha * 0.9 });
+        break;
+        
+      default:
+        // Circle fallback
+        this.predatorGraphics.circle(x, y, size);
+        this.predatorGraphics.fill({ color: visual.color, alpha });
+    }
+    
+    // Outer glow
+    this.predatorGraphics.circle(x, y, size * 1.4 * pulse);
+    this.predatorGraphics.fill({ color: visual.color, alpha: alpha * 0.2 });
+  }
+
+  /**
+   * Draw energy bar below predator
+   */
+  private drawEnergyBar(x: number, y: number, energy: number, maxEnergy: number, color: number): void {
+    const barWidth = 24;
+    const barHeight = 3;
+    const barY = y + 20;
+    
+    // Background
+    this.predatorGraphics.rect(x - barWidth / 2, barY, barWidth, barHeight);
+    this.predatorGraphics.fill({ color: 0x333333, alpha: 0.6 });
+    
+    // Energy fill
+    const fillWidth = (energy / maxEnergy) * barWidth;
+    const energyColor = energy > maxEnergy * 0.3 ? color : 0xff0000;
+    this.predatorGraphics.rect(x - barWidth / 2, barY, fillWidth, barHeight);
+    this.predatorGraphics.fill({ color: energyColor, alpha: 0.8 });
+  }
+
+  /**
+   * Draw dashed circle for panic radius
+   */
+  private drawDashedCircle(x: number, y: number, radius: number, color: number, alpha: number): void {
+    const segments = 32;
+    for (let i = 0; i < segments; i += 2) {
+      const startAngle = (i / segments) * Math.PI * 2;
+      const endAngle = ((i + 1) / segments) * Math.PI * 2;
+      
+      this.predatorRangeGraphics.moveTo(
+        x + Math.cos(startAngle) * radius,
+        y + Math.sin(startAngle) * radius
+      );
+      this.predatorRangeGraphics.lineTo(
+        x + Math.cos(endAngle) * radius,
+        y + Math.sin(endAngle) * radius
+      );
+    }
+    this.predatorRangeGraphics.stroke({ width: 1, color, alpha });
+  }
+
+  /**
+   * Draw dive trail for falcon
+   */
+  private drawDiveTrail(x: number, y: number, vx: number, vy: number, color: number): void {
+    const trailLength = 5;
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    if (speed < 1) return;
+    
+    const dx = -vx / speed;
+    const dy = -vy / speed;
+    
+    for (let i = 1; i <= trailLength; i++) {
+      const trailX = x + dx * i * 8;
+      const trailY = y + dy * i * 8;
+      const trailAlpha = 0.4 * (1 - i / trailLength);
+      const trailSize = 4 * (1 - i / trailLength);
+      
+      this.predatorGraphics.circle(trailX, trailY, trailSize);
+      this.predatorGraphics.fill({ color, alpha: trailAlpha });
+    }
+  }
+
+  /**
+   * Draw speed lines for hawk burst
+   */
+  private drawSpeedLines(x: number, y: number, heading: number, color: number): void {
+    const lineCount = 3;
+    const lineLength = 15;
+    
+    for (let i = 0; i < lineCount; i++) {
+      const offset = (i - 1) * 0.3;
+      const angle = heading + Math.PI + offset;
+      
+      const startX = x + Math.cos(angle) * 10;
+      const startY = y + Math.sin(angle) * 10;
+      const endX = startX + Math.cos(angle) * lineLength;
+      const endY = startY + Math.sin(angle) * lineLength;
+      
+      this.predatorGraphics.moveTo(startX, startY);
+      this.predatorGraphics.lineTo(endX, endY);
+      this.predatorGraphics.stroke({ width: 2, color, alpha: 0.4 });
     }
   }
 

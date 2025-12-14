@@ -1,6 +1,9 @@
 /**
- * Predator AI - Autonomous predator with hunting behavior
- * Version: 1.0.0
+ * Predator AI - Autonomous predator with hunting behavior (Legacy)
+ * Version: 1.1.0 - Updated for compatibility with new predator system
+ * 
+ * NOTE: This is the legacy predator class. For new features, use the
+ * predator classes in ./predators/ which support multiple predator types.
  * 
  * The predator creates panic in the flock, triggering evasive behavior.
  * 
@@ -17,11 +20,16 @@
  */
 
 import { Vector2 } from '../utils/Vector2';
-import { noise, randomRange } from '../utils/MathUtils';
 import type { Bird } from '../simulation/Bird';
 import type { IEnvironmentConfig, IPredatorState } from '../types';
 
+/** Static ID counter */
+let legacyPredatorId = 1000;
+
 export class Predator {
+  /** Unique identifier */
+  public readonly id: number;
+  
   /** Current position */
   public position: Vector2;
   
@@ -58,6 +66,7 @@ export class Predator {
   private readonly huntingDuration: number = 5;
 
   constructor(width: number, height: number) {
+    this.id = legacyPredatorId++;
     this.width = width;
     this.height = height;
     
@@ -113,7 +122,7 @@ export class Predator {
    * Idle behavior: wander around edges, occasionally decide to hunt
    */
   private updateIdle(
-    deltaTime: number,
+    _deltaTime: number,
     config: IEnvironmentConfig,
     flockCenter: Vector2
   ): void {
@@ -144,8 +153,8 @@ export class Predator {
    * Hunting behavior: move toward flock center
    */
   private updateHunting(
-    deltaTime: number,
-    config: IEnvironmentConfig,
+    _deltaTime: number,
+    _config: IEnvironmentConfig,
     birds: Bird[],
     flockCenter: Vector2
   ): void {
@@ -182,8 +191,8 @@ export class Predator {
    * Attacking behavior: dive toward target bird
    */
   private updateAttacking(
-    deltaTime: number,
-    config: IEnvironmentConfig,
+    _deltaTime: number,
+    _config: IEnvironmentConfig,
     birds: Bird[]
   ): void {
     // Find closest bird to attack
@@ -314,11 +323,20 @@ export class Predator {
    */
   getState(): IPredatorState {
     return {
+      id: this.id,
+      type: 'hawk', // Legacy predator defaults to hawk type
       position: { x: this.position.x, y: this.position.y },
       velocity: { x: this.velocity.x, y: this.velocity.y },
       target: this.target ? { x: this.target.x, y: this.target.y } : null,
+      targetBirdId: null,
       state: this.state,
-      cooldown: this.cooldown
+      energy: 100,
+      maxEnergy: 100,
+      cooldown: this.cooldown,
+      panicRadius: 150, // Legacy default
+      huntDuration: this.stateTime,
+      successfulHunts: 0,
+      failedHunts: 0
     };
   }
 

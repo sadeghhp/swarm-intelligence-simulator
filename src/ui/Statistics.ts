@@ -79,19 +79,35 @@ export class Statistics {
       if (stats.activeFood !== undefined && stats.activeFood > 0) {
         this.predatorElement.textContent = `${stats.activeFood} Food`;
         this.predatorElement.style.color = '#88ff88';
-      } else {
-        this.predatorElement.textContent = this.capitalizeFirst(stats.predatorState);
+      } else if (stats.activePredators > 0) {
+        // Show predator type and state
+        const typeStr = stats.predatorType ? this.capitalizeFirst(stats.predatorType) : 'Predator';
+        const stateStr = this.capitalizeFirst(stats.predatorState);
+        this.predatorElement.textContent = `${typeStr}: ${stateStr}`;
+        
         // Color code predator state
         switch (stats.predatorState) {
           case 'hunting':
+          case 'stalking':
+          case 'scanning':
             this.predatorElement.style.color = '#ffaa00';
             break;
           case 'attacking':
+          case 'diving':
             this.predatorElement.style.color = '#ff6666';
+            break;
+          case 'ambushing':
+            this.predatorElement.style.color = '#9b59b6';
+            break;
+          case 'recovering':
+            this.predatorElement.style.color = '#888888';
             break;
           default:
             this.predatorElement.style.color = 'var(--text-muted)';
         }
+      } else {
+        this.predatorElement.textContent = 'No Predator';
+        this.predatorElement.style.color = 'var(--text-muted)';
       }
     }
   }

@@ -17,7 +17,8 @@ import type {
   IEnvironmentConfig,
   IRenderingConfig,
   CreaturePreset,
-  ICreaturePreset
+  ICreaturePreset,
+  PredatorType
 } from '../types';
 import { getConfig } from '../config/ConfigLoader';
 import { getPresetManager } from '../config/PresetManager';
@@ -29,6 +30,8 @@ export interface ControlPanelCallbacks {
   onResume: () => void;
   onReset: () => void;
   onPredatorToggle: (enabled: boolean) => void;
+  onPredatorTypeChange?: (type: PredatorType) => void;
+  onPredatorCountChange?: (count: number) => void;
   onTrailsToggle: (enabled: boolean) => void;
   onPresetChange: (preset: CreaturePreset) => void;
   onFoodToggle: (enabled: boolean) => void;
@@ -652,6 +655,33 @@ export class ControlPanel {
       this.callbacks.onPredatorToggle(ev.value);
     });
     
+    // Predator type selector
+    const predatorTypeState = { type: (this.envConfig.predatorType || 'hawk') as PredatorType };
+    predatorFolder.addBinding(predatorTypeState, 'type', {
+      label: 'Type',
+      options: {
+        'Hawk (Edge Hunter)': 'hawk',
+        'Falcon (Stoop Diver)': 'falcon',
+        'Eagle (Pursuer)': 'eagle',
+        'Owl (Ambusher)': 'owl'
+      }
+    }).on('change', (ev) => {
+      this.envConfig.predatorType = ev.value as PredatorType;
+      this.callbacks.onPredatorTypeChange?.(ev.value as PredatorType);
+    });
+    
+    // Predator count
+    predatorFolder.addBinding(this.envConfig, 'predatorCount', {
+      label: 'Count',
+      min: 1,
+      max: 4,
+      step: 1
+    }).on('change', (ev) => {
+      this.callbacks.onPredatorCountChange?.(ev.value);
+    });
+    
+    predatorFolder.addBlade({ view: 'separator' });
+    
     predatorFolder.addBinding(this.envConfig, 'predatorSpeed', {
       label: 'Speed',
       min: 8,
@@ -678,6 +708,14 @@ export class ControlPanel {
       min: 0.5,
       max: 1.0,
       step: 0.05
+    });
+    
+    // Predator type info
+    predatorFolder.addBlade({
+      view: 'text',
+      label: 'Info',
+      parse: (v: string) => v,
+      value: 'Different types have unique hunting behaviors'
     });
   }
 
