@@ -121,6 +121,7 @@ export class ControlPanel {
     this.setupEnvironment();
     this.setupEnergy();
     this.setupFood();
+    this.setupMating();
     this.setupEcosystem();
     this.setupDayNight();
     this.setupTerritory();
@@ -827,6 +828,78 @@ export class ControlPanel {
       min: 30,
       max: 200,
       step: 10
+    });
+  }
+
+  /**
+   * Setup mating & competition folder
+   */
+  private setupMating(): void {
+    const folder = this.pane.addFolder({
+      title: '💕 Mating & Competition',
+      expanded: false
+    });
+    
+    folder.addBinding(this.envConfig, 'matingEnabled', {
+      label: 'Active'
+    });
+    
+    folder.addBinding(this.envConfig, 'mateSearchRadius', {
+      label: 'Search Range',
+      min: 30,
+      max: 200,
+      step: 10
+    });
+    
+    folder.addBinding(this.envConfig, 'mateAttractionStrength', {
+      label: 'Attraction',
+      min: 0.1,
+      max: 2.5,
+      step: 0.1
+    });
+    
+    folder.addBinding(this.envConfig, 'matingDuration', {
+      label: 'Duration (s)',
+      min: 0.5,
+      max: 10,
+      step: 0.5
+    });
+    
+    folder.addBinding(this.envConfig, 'matingCooldown', {
+      label: 'Cooldown (s)',
+      min: 2,
+      max: 30,
+      step: 1
+    });
+    
+    folder.addBlade({ view: 'separator' });
+    
+    folder.addBinding(this.envConfig, 'fightRadius', {
+      label: 'Fight Range',
+      min: 20,
+      max: 150,
+      step: 10
+    });
+    
+    folder.addBinding(this.envConfig, 'fightStrength', {
+      label: 'Fight Intensity',
+      min: 0.5,
+      max: 3.0,
+      step: 0.1
+    });
+    
+    folder.addBinding(this.envConfig, 'femaleSelectivity', {
+      label: 'Female Pickiness',
+      min: 0,
+      max: 1,
+      step: 0.05
+    });
+    
+    folder.addBlade({
+      view: 'text',
+      label: 'Info',
+      parse: (v: string) => v,
+      value: 'Males compete; females select mates'
     });
   }
 

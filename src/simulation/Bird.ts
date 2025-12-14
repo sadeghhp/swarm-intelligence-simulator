@@ -1,6 +1,6 @@
 /**
  * Bird Entity - Core simulation unit for swarm behavior
- * Version: 1.3.0 - Added feeding behavior states
+ * Version: 1.4.0 - Added gender and mating behavior states
  * 
  * Each bird maintains its own physics state:
  * - Position: Current location in 2D space
@@ -14,7 +14,7 @@
  */
 
 import { Vector2 } from '../utils/Vector2';
-import type { ISimulationConfig, FeedingState } from '../types';
+import type { ISimulationConfig, FeedingState, Gender, MatingState } from '../types';
 
 // Pre-allocated vectors for all birds (static to avoid per-bird allocation)
 const tempVec = new Vector2();
@@ -54,6 +54,24 @@ export class Bird {
   /** Timer for how long bird has been feeding (seconds) */
   public feedingTimer: number = 0;
   
+  /** Gender for mating behavior */
+  public gender: Gender;
+  
+  /** Current mating behavior state */
+  public matingState: MatingState = 'none';
+  
+  /** ID of target mate (-1 if none) */
+  public targetMateId: number = -1;
+  
+  /** Timer for mating/fighting duration */
+  public matingTimer: number = 0;
+  
+  /** Cooldown timer before can seek again (seconds) */
+  public matingCooldown: number = 0;
+  
+  /** Aggression level (0-1) for fighting, derived from energy/size/randomness */
+  public aggressionLevel: number = 0;
+  
   /** Cached heading angle for rendering */
   private _heading: number = 0;
 
@@ -62,6 +80,12 @@ export class Bird {
     this.position = new Vector2(x, y);
     this.velocity = Vector2.random().mult(5); // Start with random velocity
     this.acceleration = new Vector2();
+    
+    // Initialize gender (50/50 random)
+    this.gender = Math.random() < 0.5 ? 'male' : 'female';
+    
+    // Males have aggression for fighting, females don't fight
+    this.aggressionLevel = this.gender === 'male' ? 0.5 + Math.random() * 0.5 : 0;
   }
 
   /**
@@ -139,6 +163,14 @@ export class Bird {
       this.energy -= energyDecayRate * deltaTime * speedFactor;
       if (this.energy < 0) {
         this.energy = 0;
+      }
+    }
+    
+    // Decay mating cooldown
+    if (this.matingCooldown > 0) {
+      this.matingCooldown -= deltaTime;
+      if (this.matingCooldown < 0) {
+        this.matingCooldown = 0;
       }
     }
   }
@@ -267,6 +299,14 @@ export class Bird {
     this.feedingState = 'none';
     this.targetFoodId = -1;
     this.feedingTimer = 0;
+    
+    // Reset mating state (preserve gender)
+    this.matingState = 'none';
+    this.targetMateId = -1;
+    this.matingTimer = 0;
+    this.matingCooldown = 0;
+    // Re-randomize aggression for males
+    this.aggressionLevel = this.gender === 'male' ? 0.5 + Math.random() * 0.5 : 0;
   }
   
   /**
@@ -307,6 +347,82 @@ export class Bird {
    */
   isFeeding(): boolean {
     return this.feedingState !== 'none';
+  }
+  
+  /**
+   * Start seeking a mate
+   */
+  startSeekingMate(): void {
+    this.matingState = 'seeking';
+    this.targetMateId = -1;
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * Start approaching a potential mate
+   */
+  startApproachingMate(mateId: number): void {
+    this.matingState = 'approaching';
+    this.targetMateId = mateId;
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * Transition to courting state
+   */
+  startCourting(): void {
+    this.matingState = 'courting';
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * Start mating with partner
+   */
+  startMating(partnerId: number): void {
+    this.matingState = 'mating';
+    this.targetMateId = partnerId;
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * Enter fighting state (male competition)
+   */
+  startFighting(): void {
+    this.matingState = 'fighting';
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * End mating/fighting and enter cooldown
+   */
+  endMatingBehavior(cooldownDuration: number): void {
+    this.matingState = 'cooldown';
+    this.matingCooldown = cooldownDuration;
+    this.targetMateId = -1;
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * Clear mating state (return to none)
+   */
+  clearMatingState(): void {
+    this.matingState = 'none';
+    this.targetMateId = -1;
+    this.matingTimer = 0;
+  }
+  
+  /**
+   * Check if bird is currently in any mating-related state
+   */
+  isMating(): boolean {
+    return this.matingState !== 'none' && this.matingState !== 'cooldown';
+  }
+  
+  /**
+   * Check if bird is eligible to seek a mate
+   */
+  canSeekMate(): boolean {
+    return this.matingState === 'none' && this.matingCooldown <= 0;
   }
 
   /**

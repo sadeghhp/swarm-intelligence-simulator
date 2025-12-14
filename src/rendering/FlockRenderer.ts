@@ -1,6 +1,6 @@
 /**
  * Flock Renderer - High-performance PixiJS rendering for creatures
- * Version: 1.3.0 - Added multi-species color support
+ * Version: 1.4.0 - Added gender visual differences (color tint + size)
  * 
  * Uses PixiJS Container with optimized sprite batching
  * for rendering thousands of creatures at 60fps.
@@ -8,6 +8,8 @@
  * Features:
  * - Multiple particle shapes (arrow, circle, triangle, dot)
  * - Dynamic color based on density, speed, or panic
+ * - Gender-based color tinting and size differences
+ * - Mating/fighting state visual overlays
  * - Configurable particle size
  * - Optional glow effects
  * - Motion trails
@@ -378,15 +380,22 @@ export class FlockRenderer {
       // Rotation (heading direction)
       sprite.rotation = bird.heading;
       
-      // Color based on state
+      // Color based on state (includes gender tint)
       sprite.tint = this.calculateBirdColor(bird);
       
-      // Scale based on size config and speed (subtle)
+      // Scale based on size config, speed, and gender
       const speedScale = 0.7 + clamp(bird.speed / 20, 0, 0.5);
-      sprite.scale.set(speedScale * this.particleSize);
+      const genderScale = bird.gender === 'male' ? 1.08 : 0.94; // males ~8% larger
+      const matingBoost = (bird.matingState === 'courting' || bird.matingState === 'mating') 
+        ? 1.1 : 1.0; // slight size boost when mating
+      sprite.scale.set(speedScale * this.particleSize * genderScale * matingBoost);
       
-      // Alpha based on panic (slight fade when calm)
-      sprite.alpha = 0.85 + bird.panicLevel * 0.15;
+      // Alpha based on panic + mating visibility
+      let alpha = 0.85 + bird.panicLevel * 0.15;
+      if (bird.matingState === 'mating' || bird.matingState === 'fighting') {
+        alpha = Math.min(1.0, alpha + 0.1); // more visible during mating/fighting
+      }
+      sprite.alpha = alpha;
       
       // Update glow sprite if enabled
       if (this.config.glowEnabled && this.glowSprites[i]) {
@@ -405,7 +414,7 @@ export class FlockRenderer {
   }
 
   /**
-   * Calculate bird color based on state
+   * Calculate bird color based on state (including gender and mating)
    */
   private calculateBirdColor(bird: Bird): number {
     // Get base colors - use species-specific colors if available
@@ -441,7 +450,28 @@ export class FlockRenderer {
       color = lerpColor(0x333333, color, energyFactor);
     }
     
-    // Overlay panic color
+    // Apply gender tint (subtle blend)
+    const genderTintStrength = 0.15; // 15% blend
+    if (bird.gender === 'male') {
+      // Warm tint (orange/red shift)
+      const maleTint = 0xff8844;
+      color = lerpColor(color, maleTint, genderTintStrength);
+    } else {
+      // Cool tint (cyan/blue shift)
+      const femaleTint = 0x44ccff;
+      color = lerpColor(color, femaleTint, genderTintStrength);
+    }
+    
+    // Mating state color overlay (stronger than gender tint)
+    if (bird.matingState === 'courting' || bird.matingState === 'mating') {
+      const matingTint = 0xff66ff; // pink/magenta
+      color = lerpColor(color, matingTint, 0.3);
+    } else if (bird.matingState === 'fighting') {
+      const fightTint = 0xff3300; // intense red
+      color = lerpColor(color, fightTint, 0.4);
+    }
+    
+    // Overlay panic color (still dominant at high panic)
     if (bird.panicLevel > 0.1) {
       color = lerpColor(color, panicColor, bird.panicLevel * 0.8);
     }

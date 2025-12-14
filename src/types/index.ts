@@ -1,6 +1,6 @@
 /**
  * Core TypeScript interfaces for the Starling Swarm Simulator
- * Version: 1.6.0 - Added ocean predator types (shark, orca, barracuda, sea_lion)
+ * Version: 1.7.0 - Added gender and mating/fighting behavior system
  */
 
 /** 2D Vector representation */
@@ -86,6 +86,19 @@ export type FeedingBehaviorType = 'gather' | 'swarm' | 'hover';
 /** Creature feeding states */
 export type FeedingState = 'none' | 'approaching' | 'gathering' | 'feeding';
 
+/** Bird gender for mating behavior */
+export type Gender = 'male' | 'female';
+
+/** Mating/courtship behavior states */
+export type MatingState = 
+  | 'none'        // Not seeking/not eligible
+  | 'seeking'     // Actively looking for mate
+  | 'approaching' // Moving toward target mate
+  | 'courting'    // Close to mate, pre-mating display
+  | 'mating'      // Paired and stationary
+  | 'fighting'    // Male competition for access
+  | 'cooldown';   // Post-mating recovery period
+
 /** Environment configuration */
 export interface IEnvironmentConfig {
   // Wind
@@ -120,6 +133,21 @@ export interface IEnvironmentConfig {
   huntingEnabled: boolean;
   huntingSpeed: number;
   huntingRadius: number;
+  
+  // Mating & competition behavior
+  matingEnabled: boolean;              // Toggle mating system
+  mateSearchRadius: number;            // Detection range for opposite gender
+  mateAttractionStrength: number;      // Steering force multiplier toward mate (0.5-2.0)
+  courtingDistance: number;            // Distance to start courting display
+  matingDistance: number;              // Distance to lock into mating
+  matingDuration: number;              // Time pair stays together (seconds)
+  matingCooldown: number;              // Cooldown before seeking again (seconds)
+  fightRadius: number;                 // Male competition detection radius
+  fightDuration: number;               // Contest length (seconds)
+  fightStrength: number;               // Repulsion/jostle force
+  panicSuppressesMating: boolean;      // High panic disables mating
+  energyThresholdForMating: number;    // Min energy to seek mate (0-1)
+  femaleSelectivity: number;           // Female pickiness (0-1, higher = fewer acceptances)
 }
 
 /** Food source */
@@ -151,6 +179,11 @@ export interface ISimulationStats {
   activePredators: number;
   foodConsumed: number;
   activeFood: number;
+  // Gender & mating stats
+  maleCount?: number;
+  femaleCount?: number;
+  activeMatingPairs?: number;
+  activeFights?: number;
 }
 
 /** Predator types - different hunting strategies */

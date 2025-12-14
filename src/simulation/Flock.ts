@@ -1,6 +1,6 @@
 /**
  * Flock Manager - Orchestrates the swarm simulation
- * Version: 1.2.0 - Added feeding behavior state machine
+ * Version: 1.3.0 - Added mating and fighting behavior system
  * 
  * Responsibilities:
  * - Manages all bird instances
@@ -9,16 +9,18 @@
  * - Applies environmental forces
  * - Tracks simulation statistics
  * - Manages feeding state transitions
+ * - Manages mating and competition behavior
  * 
  * The update loop follows this order each frame:
  * 1. Clear and rebuild spatial grid
  * 2. For each bird:
  *    a. Update feeding state machine
- *    b. Find neighbors using spatial grid
- *    c. Calculate swarm forces (alignment, cohesion, separation)
- *    d. Apply environmental forces (wind, predator, attractors)
- *    e. Apply boundary forces
- *    f. Update bird physics
+ *    b. Update mating state machine
+ *    c. Find neighbors using spatial grid
+ *    d. Calculate swarm forces (alignment, cohesion, separation)
+ *    e. Apply environmental forces (wind, predator, attractors)
+ *    f. Apply boundary forces
+ *    g. Update bird physics
  * 3. Update statistics
  */
 
@@ -42,6 +44,9 @@ const tempWindForce = new Vector2();
 const tempFoodForce = new Vector2();
 const tempGatherForce = new Vector2();
 const tempFeedForce = new Vector2();
+const tempMateForce = new Vector2();
+const tempFightForce = new Vector2();
+const tempCourtForce = new Vector2();
 
 export class Flock {
   /** All birds in the flock */
@@ -91,7 +96,11 @@ export class Flock {
     predatorState: 'idle',
     activePredators: 0,
     foodConsumed: 0,
-    activeFood: 0
+    activeFood: 0,
+    maleCount: 0,
+    femaleCount: 0,
+    activeMatingPairs: 0,
+    activeFights: 0
   };
 
   constructor(
@@ -216,6 +225,7 @@ export class Flock {
       }
       
       // Find neighbors using spatial grid (returns view into buffer)
+      // Note: We get neighbors early so mating can use them
       const neighbors = this.spatialGrid.getNeighbors(
         bird,
         this.birds,
@@ -310,6 +320,11 @@ export class Flock {
             neighbors[j].applyPanic(panicSpread);
           }
         }
+      }
+      
+      // Mating & competition behavior (if enabled)
+      if (this.envConfig.matingEnabled) {
+        this.updateMatingBehavior(bird, neighbors, dt);
       }
       
       // Apply boundary avoidance (always)
@@ -559,6 +574,404 @@ export class Flock {
     bird.stopFeeding();
   }
 
+  // ========================================
+  // MATING & COMPETITION BEHAVIOR SYSTEM
+  // ========================================
+
+  /**
+   * Update mating/fighting behavior for a single bird
+   * Composed with existing forces (runs after swarm/wind/predator)
+   */
+  private updateMatingBehavior(bird: Bird, neighbors: Bird[], dt: number): void {
+    // Skip if high panic and config says panic suppresses mating
+    if (this.envConfig.panicSuppressesMating && bird.panicLevel > 0.5) {
+      if (bird.matingState !== 'none' && bird.matingState !== 'cooldown') {
+        bird.clearMatingState();
+      }
+      return;
+    }
+    
+    // Skip if low energy (if energy system enabled)
+    if (this.config.energyEnabled && 
+        bird.energy < this.envConfig.energyThresholdForMating &&
+        bird.matingState === 'none') {
+      return;
+    }
+    
+    // Update state machine
+    switch (bird.matingState) {
+      case 'none':
+        this.tryStartSeeking(bird);
+        break;
+        
+      case 'seeking':
+        this.seekMate(bird, neighbors);
+        break;
+        
+      case 'approaching':
+        this.approachMate(bird, neighbors, dt);
+        break;
+        
+      case 'courting':
+        this.courtMate(bird, neighbors, dt);
+        break;
+        
+      case 'mating':
+        this.maintainMating(bird, dt);
+        break;
+        
+      case 'fighting':
+        this.resolveFight(bird, neighbors, dt);
+        break;
+        
+      case 'cooldown':
+        // Cooldown handled in Bird.update()
+        if (bird.matingCooldown <= 0) {
+          bird.matingState = 'none';
+        }
+        break;
+    }
+  }
+
+  /**
+   * Try to start seeking a mate (random chance to avoid all birds seeking at once)
+   */
+  private tryStartSeeking(bird: Bird): void {
+    if (bird.canSeekMate() && Math.random() < 0.02) {
+      bird.startSeekingMate();
+    }
+  }
+
+  /**
+   * Find nearest opposite-gender, same species, eligible candidate
+   */
+  private seekMate(bird: Bird, neighbors: Bird[]): void {
+    let bestCandidate: Bird | null = null;
+    let bestDistSq = this.envConfig.mateSearchRadius * this.envConfig.mateSearchRadius;
+    
+    for (const other of neighbors) {
+      if (other.id === bird.id) continue;
+      if (other.gender === bird.gender) continue;
+      if (other.speciesId !== bird.speciesId) continue;
+      if (other.matingState !== 'none' && other.matingState !== 'seeking') continue;
+      if (other.matingCooldown > 0) continue;
+      
+      const dx = other.position.x - bird.position.x;
+      const dy = other.position.y - bird.position.y;
+      const distSq = dx * dx + dy * dy;
+      
+      if (distSq < bestDistSq) {
+        // Female selectivity check (females reject some males randomly)
+        if (bird.gender === 'male' && other.gender === 'female') {
+          if (Math.random() < this.envConfig.femaleSelectivity) continue;
+        }
+        bestDistSq = distSq;
+        bestCandidate = other;
+      }
+    }
+    
+    if (bestCandidate) {
+      bird.startApproachingMate(bestCandidate.id);
+    }
+  }
+
+  /**
+   * Approach target mate, checking for male competition
+   */
+  private approachMate(bird: Bird, neighbors: Bird[], _dt: number): void {
+    const target = this.birds.find(b => b.id === bird.targetMateId);
+    if (!target || target.matingState === 'mating' || target.matingState === 'fighting') {
+      bird.startSeekingMate();
+      return;
+    }
+    
+    const dx = target.position.x - bird.position.x;
+    const dy = target.position.y - bird.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    // Check for male competition (males only)
+    if (bird.gender === 'male' && target.gender === 'female') {
+      const fightRadiusSq = this.envConfig.fightRadius * this.envConfig.fightRadius;
+      for (const n of neighbors) {
+        if (n.id !== bird.id &&
+            n.gender === 'male' &&
+            n.targetMateId === target.id &&
+            n.matingState === 'approaching') {
+          const rivalDx = bird.position.x - n.position.x;
+          const rivalDy = bird.position.y - n.position.y;
+          const rivalDistSq = rivalDx * rivalDx + rivalDy * rivalDy;
+          
+          if (rivalDistSq < fightRadiusSq) {
+            bird.startFighting();
+            return;
+          }
+        }
+      }
+    }
+    
+    // Apply attraction force toward target
+    this.calculateMateAttractionForce(
+      bird,
+      target,
+      this.envConfig.mateAttractionStrength,
+      this.envConfig.courtingDistance,
+      tempMateForce
+    );
+    bird.applyForce(tempMateForce);
+    
+    // Transition to courting if close enough
+    if (dist < this.envConfig.courtingDistance) {
+      bird.startCourting();
+    }
+  }
+
+  /**
+   * Courting behavior - close to mate, pre-mating display
+   */
+  private courtMate(bird: Bird, _neighbors: Bird[], dt: number): void {
+    const target = this.birds.find(b => b.id === bird.targetMateId);
+    if (!target) {
+      bird.startSeekingMate();
+      return;
+    }
+    
+    bird.matingTimer += dt;
+    const dx = target.position.x - bird.position.x;
+    const dy = target.position.y - bird.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    // Continue approach with arrival behavior
+    this.calculateMateAttractionForce(
+      bird,
+      target,
+      this.envConfig.mateAttractionStrength * 0.7,
+      this.envConfig.matingDistance,
+      tempCourtForce
+    );
+    bird.applyForce(tempCourtForce);
+    
+    // Lock into mating if close enough and courted long enough
+    if (dist < this.envConfig.matingDistance && bird.matingTimer > 0.5) {
+      bird.startMating(target.id);
+      // Set partner to mating as well
+      if (target.matingState === 'seeking' || target.matingState === 'approaching' || 
+          target.matingState === 'courting' || target.matingState === 'none') {
+        target.startMating(bird.id);
+      }
+    }
+    
+    // If pushed too far out, go back to approaching
+    if (dist > this.envConfig.courtingDistance * 1.5) {
+      bird.startApproachingMate(bird.targetMateId);
+    }
+  }
+
+  /**
+   * Maintain mating - keep pair together
+   */
+  private maintainMating(bird: Bird, dt: number): void {
+    bird.matingTimer += dt;
+    
+    const partner = this.birds.find(b => b.id === bird.targetMateId);
+    if (!partner) {
+      this.endMating(bird);
+      return;
+    }
+    
+    // Keep pair together with cohesion force
+    this.calculateMatingCohesionForce(bird, partner, tempMateForce);
+    bird.applyForce(tempMateForce);
+    
+    // End after duration
+    if (bird.matingTimer >= this.envConfig.matingDuration) {
+      this.endMating(bird);
+      if (partner.matingState === 'mating') {
+        this.endMating(partner);
+      }
+    }
+  }
+
+  /**
+   * End mating and enter cooldown
+   */
+  private endMating(bird: Bird): void {
+    bird.endMatingBehavior(this.envConfig.matingCooldown);
+    
+    // Drain energy if enabled
+    if (this.config.energyEnabled) {
+      bird.energy = Math.max(0, bird.energy - 0.1);
+    }
+  }
+
+  /**
+   * Resolve fight between males competing for same female
+   */
+  private resolveFight(bird: Bird, neighbors: Bird[], dt: number): void {
+    bird.matingTimer += dt;
+    
+    const target = this.birds.find(b => b.id === bird.targetMateId);
+    if (!target) {
+      bird.endMatingBehavior(this.envConfig.matingCooldown * 0.5);
+      return;
+    }
+    
+    // Find rivals
+    const fightRadiusSq = this.envConfig.fightRadius * this.envConfig.fightRadius;
+    const rivals: Bird[] = [];
+    
+    for (const n of neighbors) {
+      if (n.id !== bird.id &&
+          n.gender === 'male' &&
+          n.targetMateId === target.id) {
+        const dx = bird.position.x - n.position.x;
+        const dy = bird.position.y - n.position.y;
+        const distSq = dx * dx + dy * dy;
+        
+        if (distSq < fightRadiusSq) {
+          rivals.push(n);
+        }
+      }
+    }
+    
+    // Apply repulsion from each rival
+    for (const rival of rivals) {
+      this.calculateFightRepulsionForce(bird, rival, tempFightForce);
+      bird.applyForce(tempFightForce);
+    }
+    
+    // Drain energy during fighting
+    if (this.config.energyEnabled) {
+      bird.energy = Math.max(0, bird.energy - 0.05 * dt);
+    }
+    
+    // Resolve after duration
+    if (bird.matingTimer >= this.envConfig.fightDuration) {
+      const distToFemale = Math.sqrt(
+        Math.pow(bird.position.x - target.position.x, 2) +
+        Math.pow(bird.position.y - target.position.y, 2)
+      );
+      
+      const myScore = bird.aggressionLevel + 
+                     (this.config.energyEnabled ? bird.energy : 1) +
+                     Math.random() * 0.3 -
+                     (distToFemale / this.envConfig.fightRadius) * 0.5;
+      
+      let isWinner = true;
+      for (const rival of rivals) {
+        const rivalDist = Math.sqrt(
+          Math.pow(rival.position.x - target.position.x, 2) +
+          Math.pow(rival.position.y - target.position.y, 2)
+        );
+        const rivalScore = rival.aggressionLevel +
+                          (this.config.energyEnabled ? rival.energy : 1) +
+                          Math.random() * 0.3 -
+                          (rivalDist / this.envConfig.fightRadius) * 0.5;
+        if (rivalScore > myScore) {
+          isWinner = false;
+          break;
+        }
+      }
+      
+      if (isWinner) {
+        bird.startApproachingMate(bird.targetMateId);
+      } else {
+        bird.endMatingBehavior(this.envConfig.matingCooldown * 0.5);
+      }
+    }
+  }
+
+  /**
+   * Calculate mate attraction force with arrival behavior
+   * PERFORMANCE: Uses output parameter, zero allocations
+   */
+  private calculateMateAttractionForce(
+    seeker: Bird,
+    target: Bird,
+    attractionStrength: number,
+    slowdownDistance: number,
+    outForce: Vector2
+  ): void {
+    const dx = target.position.x - seeker.position.x;
+    const dy = target.position.y - seeker.position.y;
+    const distSq = dx * dx + dy * dy;
+    const dist = Math.sqrt(distSq);
+    
+    if (dist < 1) {
+      outForce.zero();
+      return;
+    }
+    
+    // Desired velocity toward mate
+    let desiredSpeed = this.config.maxSpeed * attractionStrength;
+    
+    // Arrival behavior: slow down when close
+    if (dist < slowdownDistance) {
+      desiredSpeed *= (dist / slowdownDistance);
+    }
+    
+    const desiredX = (dx / dist) * desiredSpeed;
+    const desiredY = (dy / dist) * desiredSpeed;
+    
+    // Steering = desired - current
+    outForce.x = desiredX - seeker.velocity.x;
+    outForce.y = desiredY - seeker.velocity.y;
+    outForce.limit(this.config.maxForce * attractionStrength);
+  }
+
+  /**
+   * Calculate mating pair cohesion force (keep paired birds together)
+   * PERFORMANCE: Uses output parameter, zero allocations
+   */
+  private calculateMatingCohesionForce(
+    bird: Bird,
+    partner: Bird,
+    outForce: Vector2
+  ): void {
+    const dx = partner.position.x - bird.position.x;
+    const dy = partner.position.y - bird.position.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < 5) {
+      // Very close, apply damping only
+      outForce.x = -bird.velocity.x * 0.4;
+      outForce.y = -bird.velocity.y * 0.4;
+      return;
+    }
+    
+    // Gentle pull toward partner center
+    outForce.x = (dx / dist) * this.config.maxForce * 0.3 - bird.velocity.x * 0.2;
+    outForce.y = (dy / dist) * this.config.maxForce * 0.3 - bird.velocity.y * 0.2;
+  }
+
+  /**
+   * Calculate fight/competition repulsion between rival males
+   * PERFORMANCE: Uses output parameter, zero allocations
+   */
+  private calculateFightRepulsionForce(
+    male: Bird,
+    rival: Bird,
+    outForce: Vector2
+  ): void {
+    const dx = male.position.x - rival.position.x;
+    const dy = male.position.y - rival.position.y;
+    const distSq = dx * dx + dy * dy;
+    
+    if (distSq < 0.01) {
+      // Too close, push random direction
+      outForce.x = (Math.random() - 0.5) * this.config.maxForce * this.envConfig.fightStrength;
+      outForce.y = (Math.random() - 0.5) * this.config.maxForce * this.envConfig.fightStrength;
+      return;
+    }
+    
+    const dist = Math.sqrt(distSq);
+    
+    // Strong repulsion with inverse square falloff
+    const strength = this.envConfig.fightStrength * this.config.maxForce * (1 / distSq) * 100;
+    outForce.x = (dx / dist) * strength;
+    outForce.y = (dy / dist) * strength;
+    outForce.limit(this.config.maxForce * this.envConfig.fightStrength * 1.5);
+  }
+
   /**
    * Calculate wind force for a bird
    * PERFORMANCE: Uses output parameter, zero allocations
@@ -663,11 +1076,23 @@ export class Flock {
     let totalVelocity = 0;
     let totalDensity = 0;
     let totalEnergy = 0;
+    let maleCount = 0;
+    let femaleCount = 0;
+    let matingCount = 0;
+    let fightCount = 0;
     
     for (const bird of this.birds) {
       totalVelocity += bird.speed;
       totalDensity += bird.localDensity;
       totalEnergy += bird.energy;
+      
+      // Gender stats
+      if (bird.gender === 'male') maleCount++;
+      else femaleCount++;
+      
+      // Mating stats
+      if (bird.matingState === 'mating') matingCount++;
+      if (bird.matingState === 'fighting') fightCount++;
     }
     
     this.stats.birdCount = this.birds.length;
@@ -687,6 +1112,12 @@ export class Flock {
       this.stats.foodConsumed = this.foodManager.totalConsumed;
       this.stats.activeFood = this.foodManager.getActiveCount();
     }
+    
+    // Update mating stats
+    this.stats.maleCount = maleCount;
+    this.stats.femaleCount = femaleCount;
+    this.stats.activeMatingPairs = Math.floor(matingCount / 2);
+    this.stats.activeFights = fightCount;
   }
 
   /**

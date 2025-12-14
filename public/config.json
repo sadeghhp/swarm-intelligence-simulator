@@ -1,6 +1,6 @@
 {
   "$schema": "./config.schema.json",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "simulation": {
     "creaturePreset": "ants",
     "birdCount": 400,
@@ -48,7 +48,20 @@
     "consumptionPerFeeder": 1,
     "huntingEnabled": false,
     "huntingSpeed": 12,
-    "huntingRadius": 100
+    "huntingRadius": 100,
+    "matingEnabled": false,
+    "mateSearchRadius": 80,
+    "mateAttractionStrength": 0.8,
+    "courtingDistance": 30,
+    "matingDistance": 15,
+    "matingDuration": 3.0,
+    "matingCooldown": 8.0,
+    "fightRadius": 50,
+    "fightDuration": 1.5,
+    "fightStrength": 1.2,
+    "panicSuppressesMating": true,
+    "energyThresholdForMating": 0.4,
+    "femaleSelectivity": 0.3
   },
   "rendering": {
     "showTrails": false,
