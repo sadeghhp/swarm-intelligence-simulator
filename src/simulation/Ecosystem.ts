@@ -513,3 +513,5 @@ export class Ecosystem {
     this.birdIdCounter = 0;
   }
 }
+
+
